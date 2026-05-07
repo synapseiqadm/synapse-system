@@ -19,7 +19,11 @@
       "PowerShell(New-Item -ItemType Directory -Path \"D:\\\\dev\\\\synapse\\\\backend\\\\connectors\" -Force)",
       "Bash(python -c ' *)",
       "Bash(python connectors/sync_woke.py)",
-      "PowerShell(New-Item -ItemType Directory -Path \"d:\\\\dev\\\\synapse\\\\.github\\\\workflows\" -Force)"
+      "PowerShell(New-Item -ItemType Directory -Path \"d:\\\\dev\\\\synapse\\\\.github\\\\workflows\" -Force)",
+      "mcp__claude_ai_Vercel__list_projects",
+      "mcp__claude_ai_Vercel__get_project",
+      "mcp__claude_ai_Vercel__get_deployment",
+      "mcp__claude_ai_Vercel__list_deployments"
     ]
   }
 }

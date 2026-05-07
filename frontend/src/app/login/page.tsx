@@ -21,7 +21,15 @@ export default function LoginPage() {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
 
     if (error) {
-      setError("Credenciais inválidas. Verifica o teu e-mail e password.");
+      console.error("[login] Supabase error:", {
+        message: error.message,
+        status:  error.status,
+        code:    (error as { code?: string }).code,
+        url:     process.env.NEXT_PUBLIC_SUPABASE_URL ?? "(undefined)",
+        keySet:  !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+      });
+      alert(`[DEBUG] ${error.message} (status ${error.status})\nURL: ${process.env.NEXT_PUBLIC_SUPABASE_URL ?? "undefined"}`);
+      setError(`${error.message} (${error.status})`);
       setLoading(false);
       return;
     }
