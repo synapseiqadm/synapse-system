@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(New-Item -ItemType Directory -Path \"D:\\\\dev\\\\synapse\\\\frontend\\\\src\\\\app\\\\agents\" -Force)",
+      "PowerShell(New-Item -ItemType Directory -Path \"D:\\\\dev\\\\synapse\\\\frontend\\\\src\\\\app\\\\connectors\" -Force)",
+      "Bash(git add *)",
+      "Bash(git rm *)"
+    ]
+  }
+}
