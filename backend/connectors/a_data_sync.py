@@ -25,6 +25,7 @@ from config import (
 )
 from sync_runs import start_sync_run, finish_sync_run_success, finish_sync_run_error
 from sync_ads import sync_campaigns, sync_keywords, ga4_real_data_available
+from data_quality import run_data_quality_checks, write_quality_reports
 
 
 def main(dry_run: bool = False) -> None:
@@ -87,6 +88,22 @@ def main(dry_run: bool = False) -> None:
         print(f"[sync_keywords] ERROR: {exc}", flush=True)
         if kw_run_id:
             finish_sync_run_error(supabase, kw_run_id, str(exc))
+        sys.exit(1)
+
+    # ── data quality ────────────────────────────────────────────────────────
+    # Technical errors (connection, bad query, write failure) → exit 1.
+    # A check returning status='failed' is data signal, not a pipeline error.
+    try:
+        dq_results = run_data_quality_checks(supabase)
+        if dry_run:
+            print(
+                f"[data_quality] --dry-run: would insert {len(dq_results)} quality checks",
+                flush=True,
+            )
+        else:
+            write_quality_reports(supabase, dq_results)
+    except Exception as exc:
+        print(f"[data_quality] ERROR (technical failure): {exc}", flush=True)
         sys.exit(1)
 
     print(
