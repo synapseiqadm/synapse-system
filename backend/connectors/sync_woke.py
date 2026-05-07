@@ -1,3 +1,5 @@
+# DEPRECATED — use a_data_sync.py instead.
+# Kept for reference; will be removed in a future cleanup.
 import os
 import sys
 from google.cloud import bigquery
@@ -29,6 +31,7 @@ def sync_real_campaigns():
 
     QUERY = f"""
         SELECT
+            c.campaign_id,
             c.campaign_name                              AS name,
             SUM(s.metrics_cost_micros) / 1000000         AS cost,
             SUM(s.metrics_conversions)                   AS conv,
@@ -41,7 +44,7 @@ def sync_real_campaigns():
           ON CAST(REGEXP_EXTRACT(s.campaign_base_campaign, r'/campaigns/(\\d+)') AS INT64)
              = c.campaign_id
         WHERE s.segments_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
-        GROUP BY 1
+        GROUP BY c.campaign_id, c.campaign_name
         HAVING cost > 0
         ORDER BY cost DESC
     """
@@ -60,10 +63,12 @@ def sync_real_campaigns():
 
             campaign_records.append({
                 "workspace_id":  WOKE_WORKSPACE_ID,
+                "campaign_id":   int(row.campaign_id),
                 "campaign_name": row.name,
                 "cost":          round(cost, 2),
                 "conversions":   int(row.conv) if row.conv else 0,
-                "roas":          roas
+                "roas":          roas,
+                "data_source":   "google_ads",
             })
 
         if campaign_records:
@@ -88,6 +93,7 @@ def sync_keywords():
 
     QUERY = f"""
         SELECT
+            c.campaign_id,
             c.campaign_name,
             k.ad_group_criterion_keyword_text       AS keyword,
             k.ad_group_criterion_keyword_match_type AS match_type,
@@ -112,7 +118,7 @@ def sync_keywords():
         ) c
           ON s.campaign_id = c.campaign_id
         WHERE s._DATA_DATE >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
-        GROUP BY 1, 2, 3
+        GROUP BY c.campaign_id, c.campaign_name, k.ad_group_criterion_keyword_text, k.ad_group_criterion_keyword_match_type
         HAVING clicks > 0
         ORDER BY cost DESC
     """
@@ -132,12 +138,14 @@ def sync_keywords():
             cost = float(row.cost) if row.cost else 0.0
             records.append({
                 "workspace_id":  WOKE_WORKSPACE_ID,
+                "campaign_id":   int(row.campaign_id),
                 "campaign_name": row.campaign_name,
                 "keyword":       row.keyword,
                 "match_type":    row.match_type,
                 "clicks":        int(row.clicks)       if row.clicks       else 0,
                 "cost":          round(cost, 2),
                 "conversions":   int(float(row.conversions)) if row.conversions else 0,
+                "data_source":   "google_ads",
             })
 
         print(f"📦 Enviando {len(records)} keywords para o Supabase (keyword_analysis)...")
