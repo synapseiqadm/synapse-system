@@ -4,7 +4,22 @@
       "PowerShell(New-Item -ItemType Directory -Path \"D:\\\\dev\\\\synapse\\\\frontend\\\\src\\\\app\\\\agents\" -Force)",
       "PowerShell(New-Item -ItemType Directory -Path \"D:\\\\dev\\\\synapse\\\\frontend\\\\src\\\\app\\\\connectors\" -Force)",
       "Bash(git add *)",
-      "Bash(git rm *)"
+      "Bash(git rm *)",
+      "Bash(git remote *)",
+      "Bash(git branch *)",
+      "Bash(git push *)",
+      "PowerShell(cmdkey /delete:git:https://github.com)",
+      "Bash(gh auth *)",
+      "Bash(gh repo *)",
+      "Bash(gh api *)",
+      "Bash(npm list *)",
+      "Bash(npm install *)",
+      "PowerShell(New-Item -ItemType Directory -Path \"D:\\\\dev\\\\synapse\\\\frontend\\\\src\\\\utils\\\\supabase\" -Force)",
+      "PowerShell(New-Item -ItemType Directory -Path \"D:\\\\dev\\\\synapse\\\\frontend\\\\src\\\\app\\\\login\" -Force)",
+      "PowerShell(New-Item -ItemType Directory -Path \"D:\\\\dev\\\\synapse\\\\backend\\\\connectors\" -Force)",
+      "Bash(python -c ' *)",
+      "Bash(python connectors/sync_woke.py)",
+      "PowerShell(New-Item -ItemType Directory -Path \"d:\\\\dev\\\\synapse\\\\.github\\\\workflows\" -Force)"
     ]
   }
 }
