@@ -1027,3 +1027,9 @@ Como a SQL foi aplicada manualmente no Supabase Studio, mas o db push não pôde
 chore: reconcile Supabase remote migration history with local repository
 
 Não precisa resolver agora. Mas deve ficar registrado como próxima tarefa técnica, porque o Supabase remoto tem migrations timestamp que não existem no diretório local.
+Próximo passo recomendado
+
+Agora eu registraria duas próximas frentes:
+
+Reconciliar histórico de migrations do Supabase, porque o remoto está com migrations timestamp que não existem localmente.
+v1.4 Insights determinísticos no frontend, para transformar esses sinais em leitura executiva mais clara dentro da própria tela.
