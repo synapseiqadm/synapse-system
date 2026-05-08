@@ -1,6 +1,6 @@
 # SynapseIQ — Memorial Descritivo
 
-**Versão:** 3.0  
+**Versão:** 3.1  
 **Data:** Maio 2026  
 **Stack:** Next.js 16 · Supabase · BigQuery · Python · Vercel · GitHub Actions
 
@@ -34,23 +34,38 @@ GitHub (synapseiqadm/synapse-system)
 │           └── server.ts
 │
 ├── backend/
-│   └── connectors/
-│       ├── a_data_sync.py       → Entry point (orquestra todos os módulos)
-│       ├── config.py            → Configuração e fail-fast
-│       ├── sync_runs.py         → Auditoria de execuções
-│       ├── sync_ads.py          → BigQuery → Supabase (campaigns + keywords)
-│       ├── data_quality.py      → A-Data: checks de qualidade dos dados
-│       ├── insights.py          → A-Insights: geração determinística de insights
-│       └── sync_woke.py         → DEPRECATED (mantido para referência)
+│   ├── connectors/
+│   │   ├── a_data_sync.py           → Entry point (orquestra todos os módulos)
+│   │   ├── config.py                → Configuração e fail-fast
+│   │   ├── sync_runs.py             → Auditoria de execuções
+│   │   ├── sync_ads.py              → BigQuery → Supabase (campaigns + keywords)
+│   │   ├── sync_ga4.py              → GA4 First Light (tabelas, sumário, upsert)
+│   │   ├── data_quality.py          → A-Data: 19 checks A–S, sendo A–F Ads, G–K GA4 e L–S Semantic Governance
+│   │   ├── insights.py              → A-Insights: determinísticos + semânticos
+│   │   ├── semantic_governance.py   → Governança semântica (8 checks + persistência)
+│   │   └── sync_woke.py             → DEPRECATED (mantido para referência)
+│   ├── governance/
+│   │   ├── templates/
+│   │   │   └── tenant_measurement_config.template.yml
+│   │   └── tenants/
+│   │       └── woke_measurement_config.yml
+│   └── tests/
+│       ├── __init__.py
+│       └── test_semantic_governance.py   → 36 testes unitários
 │
 ├── supabase/migrations/
 │   ├── 001_sync_runs.sql
 │   ├── 002_metadata_and_constraints.sql
 │   ├── 003_data_quality_report.sql
-│   └── 004_insight_feed.sql
+│   ├── 004_insight_feed.sql
+│   ├── 005_ga4_first_light_summary.sql
+│   └── 006_semantic_governance.sql
 │
 ├── docs/sql/
-│   └── insight_feed_rls_hardening_future.sql  → Draft (NÃO aplicar sem auth)
+│   ├── insight_feed_rls_hardening_future.sql    → Draft (NÃO aplicar sem auth)
+│   ├── mart_growth_funnel_events.sql            → Proposta analítica (NÃO aplicar via migration)
+│   ├── mart_paid_sessions_quality.sql           → Proposta analítica (NÃO aplicar via migration)
+│   └── mart_semantic_event_coverage.sql         → Proposta analítica (NÃO aplicar via migration)
 │
 └── .github/workflows/
     └── sync_data.yml     → GitHub Actions (cron diário 06h BRT)
@@ -58,14 +73,20 @@ GitHub (synapseiqadm/synapse-system)
 
 **Fluxo de dados:**
 ```
-Google Ads
-  → Airbyte Transfer
-    → BigQuery (synapsesystem.raw_google_ads_woke)
-      → a_data_sync.py
-          ├── sync_ads.py      → campaign_summary / keyword_analysis
-          ├── data_quality.py  → data_quality_report
-          └── insights.py      → insight_feed
-              → Dashboard Next.js
+Google Ads                              GA4 (analytics_289891960)
+  → Airbyte Transfer                      → BigQuery export diário
+    → BigQuery (raw_google_ads_woke)          ↓
+        ↓                               sync_ga4.py
+      a_data_sync.py ──────────────────────────────────────────────┐
+          ├── sync_ads.py          → campaign_summary / keyword_analysis
+          ├── sync_ga4.py          → ga4_first_light_summary
+          ├── data_quality.py      → data_quality_report (checks A–F + L–S)
+          │     └── semantic_governance.py
+          │           ├── run   → semantic_governance_runs
+          │           ├── finds → semantic_governance_findings
+          │           └── evid  → semantic_governance_evidence
+          └── insights.py          → insight_feed
+                                       → Dashboard Next.js
 ```
 
 ---
@@ -194,13 +215,18 @@ O header da área principal também exibe um badge pill `Building2 + "Woke Peopl
 ```
 backend/connectors/
 ├── __init__.py
-├── config.py         → Validação fail-fast; constantes de configuração
-├── sync_runs.py      → Helpers de auditoria: start / finish_success / finish_error
-├── sync_ads.py       → sync_campaigns() + sync_keywords() + ga4_real_data_available()
-├── data_quality.py   → 6 checks A–F; escreve em data_quality_report
-├── insights.py       → 4 geradores determinísticos; escreve em insight_feed
-├── a_data_sync.py    → Entry point: orquestra tudo + auditoria + --dry-run
-└── sync_woke.py      → DEPRECATED — mantido para referência histórica
+├── config.py                → Validação fail-fast; constantes; MEASUREMENT_CONFIG_PATH
+├── sync_runs.py             → Helpers de auditoria: start / finish_success / finish_error
+├── sync_ads.py              → sync_campaigns() + sync_keywords()
+├── sync_ga4.py              → GA4 First Light: get_ga4_tables(), get_ga4_first_light_summary(),
+│                              sync_ga4_first_light()
+├── data_quality.py          → 19 checks A–S; A–F Ads, G–K GA4, L–S via semantic_governance
+├── insights.py              → Geradores determinísticos + semânticos; lifecycle resolve_obsolete
+├── semantic_governance.py   → load_measurement_config(), classify_url_environment(),
+│                              8 checks L–S, persistência (runs/findings/evidence),
+│                              generate_semantic_insights()
+├── a_data_sync.py           → Entry point: orquestra tudo + auditoria + --dry-run
+└── sync_woke.py             → DEPRECATED — mantido para referência histórica
 ```
 
 ### 4.2 Dependências
@@ -215,7 +241,7 @@ python-dotenv
 #### `config.py`
 - Carrega `.env` via `python-dotenv`; snapshot `_PROCESS_ENV` antes de `load_dotenv()` para fail-fast correto em Windows
 - `required_env(name)` faz `sys.exit(1)` imediato se a variável estiver ausente
-- Expõe: `APP_ENV`, `ALLOW_MOCK_DATA`, `WOKE_WORKSPACE_ID`, `GCP_PROJECT_ID`, `BQ_LOCATION`, `GOOGLE_ADS_DATASET`, `GOOGLE_ADS_CUSTOMER_ID`, `GA4_DATASET`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `DATE_RANGE_START`, `DATE_RANGE_END`, `INSIGHT_MIN_CAMPAIGN_COST` (default 50), `INSIGHT_MIN_KEYWORD_COST` (default 20), `ENABLE_INSIGHTS` (default true)
+- Expõe: `APP_ENV`, `ALLOW_MOCK_DATA`, `WOKE_WORKSPACE_ID`, `GCP_PROJECT_ID`, `BQ_LOCATION`, `GOOGLE_ADS_DATASET`, `GOOGLE_ADS_CUSTOMER_ID`, `GA4_DATASET`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `DATE_RANGE_START`, `DATE_RANGE_END`, `INSIGHT_MIN_CAMPAIGN_COST` (default 50), `INSIGHT_MIN_KEYWORD_COST` (default 20), `ENABLE_INSIGHTS` (default true), `MEASUREMENT_CONFIG_PATH` (default: `backend/governance/tenants/woke_measurement_config.yml`)
 
 #### `sync_runs.py`
 - `start_sync_run()` → insere registo com `status='running'`; retorna UUID do run
@@ -229,28 +255,67 @@ python-dotenv
 - `can_use_mock_data(app_env, allow_mock)` → bloqueia mock em `production`
 
 #### `data_quality.py`
-Executa 6 checks de qualidade (A–F) e escreve resultados em `data_quality_report`:
-- **A** — Cobertura de conversões (campanha com custo mas zero conversões)
-- **B** — Dados recentes (última carga dentro de janela esperada)
-- **C** — Integridade de workspace (registos sem `workspace_id`)
-- **D** — ROAS anómalo (campanhas com ROAS > threshold suspeito)
-- **E** — Keywords órfãs (keywords sem campanha associada)
-- **F** — GA4 não configurado (dataset GA4 vazio ou ausente)
+Executa 19 checks de qualidade e escreve resultados em `data_quality_report`.
 
-Estratégia de escrita: INSERT (não upsert) — cada execução cria novos registos com timestamp; o dashboard deduplica por `check_name` mantendo o mais recente.
+**Checks de Google Ads (A–F):**
+- **A** — `campaign_summary_missing_campaign_id`
+- **B** — `campaign_summary_zero_conversions_with_cost`
+- **C** — `keyword_analysis_zero_conversions_with_cost`
+- **D** — `campaign_summary_freshness`
+- **E** — `keyword_analysis_freshness`
+- **F** — `mock_data_presence`
+
+**Checks de GA4 (G–K):**
+- **G** — `ga4_dataset_available`
+- **H** — `ga4_events_freshness`
+- **I** — `ga4_has_page_view`
+- **J** — `ga4_has_session_start`
+- **K** — `ga4_has_conversion_events`
+
+**Checks de Semantic Governance (L–S):** delegados a `semantic_governance.run_semantic_quality_checks()` quando `measurement_config` está carregado. Incluem: `ga4_ads_overlap_insufficient`, `ga4_conversion_registry_mismatch`, `ads_conversion_action_not_in_registry`, `ads_conversion_action_semantic_review_required`, `ga4_non_production_traffic_detected`, `ga4_suspicious_event_names_detected`, `paid_sessions_without_funnel_progress`, `utm_campaign_empty_in_paid_urls`.
+
+Estratégia de escrita: INSERT (não upsert) — cada execução cria novos registos com timestamp; o dashboard deduplica por `check_name` mantendo o mais recente. Aceita `dry_run=True` sem escrita.
 
 #### `insights.py`
-Gera 4 tipos de insights determinísticos (sem LLM) e faz upsert em `insight_feed`:
+Gera insights determinísticos (sem LLM) e faz upsert em `insight_feed`.
+
+**Tipos determinísticos:**
 - **campaign_zero_conversions_with_cost** — campanhas com custo ≥ `INSIGHT_MIN_CAMPAIGN_COST` e zero conversões
 - **keyword_zero_conversions_with_cost** — keywords com custo ≥ `INSIGHT_MIN_KEYWORD_COST` e zero conversões
 - **data_quality_warning_context** — aviso contextual quando há checks em warning/failed
+- **ga4_configured_but_no_conversion_events** — GA4 ativo mas sem eventos de conversão no período
 - **ga4_not_configured** — informativo quando `GA4_DATASET` está vazio
 
-Bloqueio: se houver checks críticos em `data_quality_report`, o pipeline substitui todos os insights por um único `data_quality_blocker` e não executa os geradores de performance.
+**Tipos semânticos** (gerados a partir dos checks L–S via `semantic_governance.generate_semantic_insights()`):
+- **ga4_ads_overlap_insufficient**, **ads_conversion_action_semantic_review_required**, **paid_sessions_without_funnel_progress**, **utm_campaign_empty_in_paid_urls**
 
-Estratégia de upsert: fetch-before-upsert — consulta `(dedupe_key → status)` antes de upsert para preservar status analista (`reviewed` / `dismissed` / `resolved`). Novos insights entram com `status='new'`.
+`resolve_obsolete_insights(supabase, insight_type, dry_run)` — marca como `resolved` todos os registos `status='new'` de um tipo ao longo de todos os períodos, quando a condição que os gerou desaparece.
+
+Estratégia de upsert: fetch-before-upsert preserva status analista (`reviewed` / `dismissed` / `resolved`).
 
 `dedupe_key`: texto estável por insight. Para keywords usa `sha1[:16]` de `kw_zero_conv|campaign_id|keyword|match_type`.
+
+#### `sync_ga4.py`
+- `get_ga4_tables(bq_client, ga4_dataset)` → lista ordenada de tabelas `events_YYYYMMDD` existentes
+- `get_ga4_first_light_summary(bq_client, ga4_dataset, tables)` → dict com `total_events`, `total_users`, `sessions`, `page_views`, `top_events`, `top_landing_pages`, `conversion_events`
+- `sync_ga4_first_light(bq_client, supabase, dry_run, tables, summary)` → UPSERT em `ga4_first_light_summary`; aceita `tables`/`summary` pré-buscados para evitar round-trips duplicados ao BigQuery
+- `GA4_CONVERSION_EVENTS` — lista de nomes de eventos de conversão esperados para check K
+
+#### `semantic_governance.py`
+- `load_measurement_config(path)` → carrega YAML do tenant; retorna `None` em qualquer erro (pipeline nunca interrompe por ausência de config)
+- `classify_url_environment(url, domains_cfg)` → `"debug" | "local" | "staging" | "preview" | "production" | "unknown"` — prioridade: debug → local → staging → preview → production → unknown
+- `MAX_EVIDENCE_ROWS_PER_FINDING = 25` — cap de evidências por finding
+- `_PARAM_ALLOWLIST_RE = re.compile(r"^[a-zA-Z0-9_]+$")` — allowlist de nomes de parâmetros antes de interpolação SQL
+- Helpers de persistência: `start_governance_run()`, `finish_governance_run()`, `write_governance_findings()`, `_write_finding_evidence()` — todos best-effort (warnings em falha, não exceptions)
+- `run_semantic_quality_checks(config, supabase, bq_client, ga4_dataset, ga4_tables, ga4_summary, dry_run)` → executa os 8 checks L–S, persiste runs/findings/evidence
+- `generate_semantic_insights(config, semantic_dq_results)` → gera insights a partir dos resultados warning/failed
+
+**Config YAML do tenant** (`woke_measurement_config.yml`):
+- `conversion_registry`: canonical_events, intermediate_events, intent_events, ads_only_conversion_actions
+- Campos de governança por evento: `business_status`, `provisional_role`, `requires_client_validation`
+- `suspicious_events`: lista de nomes genéricos a sinalizar
+- `domains`: production / staging / local (usado pelo check P)
+- `attribution.required_paid_url_params`: lista validada pelo `_PARAM_ALLOWLIST_RE` antes de interpolação SQL no check S
 
 #### `a_data_sync.py` (entry point)
 ```bash
@@ -262,6 +327,8 @@ Estratégia de upsert: fetch-before-upsert — consulta `(dedupe_key → status)
 ```
 
 O venv está na raiz do repositório (`D:\dev\synapse\.venv\`), não dentro de `backend/`.
+
+`ga4_tables` e `ga4_summary` são buscados uma única vez no início e passados por parâmetro para `sync_ga4_first_light`, `run_data_quality_checks` e `generate_insights` — evitando round-trips duplicados ao BigQuery.
 
 ### 4.4 Campos nos registos sincronizados
 
@@ -395,6 +462,69 @@ UNIQUE (workspace_id, dedupe_key, date_range_start, date_range_end)
 -- RLS: SELECT público (TO public USING (true))
 ```
 
+#### `ga4_first_light_summary` *(migration 005)*
+```sql
+id               UUID PRIMARY KEY DEFAULT gen_random_uuid()
+workspace_id     UUID NOT NULL
+ga4_dataset      TEXT NOT NULL
+total_events     BIGINT
+total_users      BIGINT
+sessions         BIGINT
+page_views       BIGINT
+top_events       JSONB     -- array de {event_name, count}
+top_landing_pages JSONB    -- array de {page_location, views}
+conversion_events JSONB    -- array de {event_name, count}
+date_range_start DATE NOT NULL
+date_range_end   DATE NOT NULL
+latest_table     TEXT
+updated_at       TIMESTAMPTZ DEFAULT NOW()
+UNIQUE (workspace_id, ga4_dataset, date_range_start, date_range_end)
+```
+
+#### `semantic_governance_runs` *(migration 006)*
+```sql
+id               UUID PRIMARY KEY DEFAULT gen_random_uuid()
+workspace_id     UUID NOT NULL
+tenant_slug      TEXT NOT NULL
+date_range_start DATE NOT NULL
+date_range_end   DATE NOT NULL
+started_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+finished_at      TIMESTAMPTZ
+status           TEXT CHECK (status IN ('running','success','error'))
+checks_run       INTEGER NOT NULL DEFAULT 0
+findings_count   INTEGER NOT NULL DEFAULT 0   -- conta apenas warnings/failed
+error_message    TEXT
+created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+```
+
+#### `semantic_governance_findings` *(migration 006)*
+```sql
+id               UUID PRIMARY KEY DEFAULT gen_random_uuid()
+run_id           UUID NOT NULL REFERENCES semantic_governance_runs(id) ON DELETE CASCADE
+workspace_id     UUID NOT NULL
+check_name       TEXT NOT NULL
+status           TEXT NOT NULL
+severity         TEXT NOT NULL
+source_platform  TEXT NOT NULL DEFAULT 'ga4'
+affected_rows    INTEGER NOT NULL DEFAULT 0
+metric_value     NUMERIC
+threshold_value  NUMERIC
+details          JSONB                          -- GIN index
+date_range_start DATE NOT NULL
+date_range_end   DATE NOT NULL
+created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+```
+
+#### `semantic_governance_evidence` *(migration 006)*
+```sql
+id             UUID PRIMARY KEY DEFAULT gen_random_uuid()
+finding_id     UUID NOT NULL REFERENCES semantic_governance_findings(id) ON DELETE CASCADE
+evidence_type  TEXT NOT NULL                   -- nome da chave lista em details
+evidence_data  JSONB NOT NULL                  -- GIN index; item individual da lista
+created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+-- Capped a MAX_EVIDENCE_ROWS_PER_FINDING (25) por lista pelo pipeline
+```
+
 ### 5.2 Migrations aplicadas
 
 | Ficheiro | O que faz |
@@ -403,6 +533,8 @@ UNIQUE (workspace_id, dedupe_key, date_range_start, date_range_end)
 | `002_metadata_and_constraints.sql` | Adiciona colunas de metadata; altera tipos; cria UNIQUE constraints para upsert |
 | `003_data_quality_report.sql` | Cria tabela `data_quality_report` com RLS pública |
 | `004_insight_feed.sql` | Cria tabela `insight_feed` com RLS pública e UNIQUE de dedupe |
+| `005_ga4_first_light_summary.sql` | Cria tabela `ga4_first_light_summary` com UNIQUE por workspace+dataset+período |
+| `006_semantic_governance.sql` | Cria `semantic_governance_runs`, `_findings` (FK+CASCADE, GIN details), `_evidence` (FK+CASCADE, GIN evidence_data); 8 índices |
 
 **Regra importante:** migrations aplicadas nunca devem ser modificadas — risco de checksum drift no Supabase CLI.
 
@@ -504,26 +636,114 @@ O ficheiro `docs/sql/insight_feed_rls_hardening_future.sql` documenta a polític
 
 ## 8. Próximos Passos
 
-### Pendentes desde v2.0
-- [ ] Integração GA4 com `data_source: "ga4"` — `ga4_real_data_available()` já preparado em `sync_ads.py`
+### Pendentes (carregados de v2.0 / v3.0)
 - [ ] Popular `kpi_cache_daily` via script de sync (alimenta a vista Geral do dashboard)
-- [ ] Agentes de IA com LangChain (páginas `/agents` já scaffoldadas)
-- [ ] Alertas automáticos por e-mail quando ROAS < threshold (tabela `sync_runs` disponível como gatilho)
-- [ ] Remover código de debug (`alert` / `console.error`) da página `/login` após confirmar login em produção
+- [ ] Alertas automáticos por e-mail quando ROAS < threshold (`sync_runs` disponível como gatilho)
+- [ ] Remover código de debug (`alert` / `console.error`) da página `/login`
 - [ ] Remover `sync_woke.py` DEPRECATED após próximo ciclo de sync bem-sucedido
-
-### Novos (v3.0)
 - [ ] Adicionar `NEXT_PUBLIC_DEFAULT_WORKSPACE_*` às variáveis de ambiente no Vercel
 - [ ] Implementar autenticação no dashboard (pré-requisito para RLS endurecida)
 - [ ] Aplicar `docs/sql/insight_feed_rls_hardening_future.sql` quando auth estiver pronto
-- [ ] Aplicar mesma política endurecida a `campaign_summary`, `keyword_analysis`, `data_quality_report`, `kpi_cache_daily`
-- [ ] Multi-workspace: selector de workspace na sidebar (base estrutural já presente em `WorkspaceSelector.tsx`)
-- [ ] Expandir A-Insights: novos tipos de insight (ROAS anómalo, budget quase esgotado, tendência de queda)
-- [ ] Dashboard de insights com histórico temporal (gráfico de insights por semana)
+- [ ] Multi-workspace: selector de workspace na sidebar
 
-### Concluídos em v3.0
+### Próxima etapa liberada — v1.2 Data Marts e API Contracts
+
+Objetivo: criar camada estável de leitura para o frontend e futuros agentes de IA.
+
+Entregáveis esperados:
+- [ ] Contratos JSON para cada endpoint de leitura
+- [ ] Endpoints de leitura: governance runs, findings, evidence
+- [ ] Filtros por workspace, período, ambiente, source, medium, campaign
+- [ ] Validar e aplicar as propostas em `docs/sql/mart_*.sql` de forma controlada
+- [ ] Preparação para Frontend GA4 MVP (v1.3)
+
+### Roadmap
+
+| Versão | Escopo | Estado |
+|---|---|---|
+| v1.0 | A-Data Ads + A-Insights + Data Quality | ✅ Concluído |
+| v1.1 | GA4 First Light + Semantic Governance | ✅ Concluído — commit `18b97c9` |
+| v1.2 | Data Marts e API Contracts | 🔜 Próxima etapa |
+| v1.3 | Frontend GA4 MVP | Pendente |
+| v1.4 | Insights determinísticos no frontend | Pendente |
+| v1.5 | AI Growth Analyst Agent | Futuro |
+| v1.6 | AI Executive Report Agent | Futuro |
+
+> **Nota:** Enhanced Conversions, GTM, privacidade e consentimento devem entrar futuramente como bloco de governança dedicado, mas não foram implementados na v1.1. Os eventos ambíguos da Woke continuam como `review_required` / `candidate` / `provisional` até validação explícita do cliente.
+
+### Concluídos em v3.0 / v3.1
 - [x] A-Data Quality: pipeline de checks + `DataQualityView` com score de saúde e accordion por check
 - [x] A-Insights v1: pipeline determinístico (4 tipos) + `InsightsView` com gestão de status
 - [x] Preservação de status analista no upsert de insights (fetch-before-upsert)
 - [x] Centralização do `workspace_id` em `src/lib/workspace.ts`
-- [x] Identificação visual do tenant ativo: sidebar (seção "Cliente"), header (badge pill), DataQualityView e InsightsView
+- [x] Identificação visual do tenant ativo: sidebar, header, DataQualityView, InsightsView
+- [x] GA4 First Light: `sync_ga4.py` + `ga4_first_light_summary` + checks G–K
+- [x] Semantic Governance v1.1: `semantic_governance.py` + 8 checks L–S + persistência Supabase
+- [x] Testes unitários: 36 testes em `backend/tests/test_semantic_governance.py`
+- [x] YAML de governança: template + config Woke com `business_status`, `provisional_role`, `requires_client_validation`
+- [x] Marts analíticos em `docs/sql/` como propostas (não aplicados automaticamente)
+
+---
+
+## 9. Atualização Histórica v3.1 — GA4 First Light e Semantic Governance v1.1
+
+**Commit:** `18b97c9` — `feat: add ga4 first light and semantic governance v1.1`  
+**Branch:** `main` → `origin/main` (push realizado)  
+**Data:** Maio 2026
+
+### Status da entrega
+
+| Item | Status | Observação |
+|---|---|---|
+| GA4 First Light | ✅ Entregue e validado | `sync_ga4.py` + `ga4_first_light_summary`; events_20260507 |
+| Semantic Governance v1.1 | ✅ Entregue e validado | 8 checks L–S + persistência em 3 tabelas |
+| Data Quality GA4 (checks G–K) | ✅ Entregue e validado | Integrados em `data_quality.py` |
+| Semantic Insights (4 tipos) | ✅ Entregue e validado | Gerados a partir dos resultados L–S |
+| Persistência Supabase | ✅ Validado em produção | runs/findings/evidence gravados com sucesso |
+| Testes unitários | ✅ 36/36 passed | `backend/tests/test_semantic_governance.py` |
+| Dry-run | ✅ Validado | Zero escritas no Supabase; todos os checks presentes |
+| Execução real | ✅ Validado | campaigns=7, keywords=81, 19 DQ checks, 21 insights |
+| Commit e push | ✅ Realizado | `18b97c9` em `main` |
+
+### Resultado da validação
+
+- **36/36 testes passaram** — deduplicação, config loading, review_required, classify_url_environment, check S multi-param, dry-run sem escrita, evidência truncada a 25 rows
+- **Dry-run sem escrita no Supabase** — `[semantic_governance] --dry-run: would write 8 findings`; nenhum INSERT real
+- **Execução real persistiu corretamente:**
+  - `semantic_governance_runs`: 1 run com `status=success`, `checks_run=8`, `findings_count=6`, `finished_at` preenchido
+  - `semantic_governance_findings`: 8 findings (6 warnings + 2 passed)
+  - `semantic_governance_evidence`: 40 evidence rows em 7 checks
+- **Check P classificou tráfego local corretamente** — `localhost/signin` → `local`; breakdown `{"local": 1}` gravado em `details`
+- **Check S validou 7 parâmetros pagos** — `utm_campaign` com 0% de presença isolado em `missing_params`; os outros 6 parâmetros com 100% de cobertura
+- **Warnings continuam não bloqueantes** — pipeline completou `done` mesmo com 6 warnings
+- **`review_required` não quebra pipeline** — `ads_conversion_action_semantic_review_required` gerou `warning/medium` e foi persistido como finding; nenhuma exception
+
+### Arquivos entregues
+
+| Arquivo | Tipo | O que faz |
+|---|---|---|
+| `backend/connectors/sync_ga4.py` | Novo | GA4 First Light: tabelas, sumário, upsert |
+| `backend/connectors/semantic_governance.py` | Novo | 8 checks L–S, persistência, classify_url_environment |
+| `backend/connectors/a_data_sync.py` | Modificado | Orquestra GA4 + governance + threading de dry_run |
+| `backend/connectors/data_quality.py` | Modificado | 19 checks A–S, dry_run param, delega L–S |
+| `backend/connectors/insights.py` | Modificado | Insights semânticos, resolve_obsolete_insights |
+| `backend/connectors/config.py` | Modificado | MEASUREMENT_CONFIG_PATH |
+| `backend/governance/templates/tenant_measurement_config.template.yml` | Novo | Template com business_status, provisional_role, requires_client_validation |
+| `backend/governance/tenants/woke_measurement_config.yml` | Novo | Config real da Woke com eventos e domínios |
+| `backend/tests/__init__.py` | Novo | Package marker |
+| `backend/tests/test_semantic_governance.py` | Novo | 36 testes unitários, sem deps externas |
+| `supabase/migrations/005_ga4_first_light_summary.sql` | Novo | Tabela ga4_first_light_summary |
+| `supabase/migrations/006_semantic_governance.sql` | Novo | 3 tabelas de governance com FKs e CASCADE |
+| `docs/sql/mart_growth_funnel_events.sql` | Novo | Proposta analítica — NÃO aplicar via migration |
+| `docs/sql/mart_paid_sessions_quality.sql` | Novo | Proposta analítica — NÃO aplicar via migration |
+| `docs/sql/mart_semantic_event_coverage.sql` | Novo | Proposta analítica — NÃO aplicar via migration |
+
+### Decisões arquiteturais preservadas
+
+- **Não decidir pela Woke qual é a conversão definitiva** — todos os eventos permanecem `candidate`, `provisional` ou `requires_client_validation: true`
+- **Tratar eventos ambíguos como `review_required`** — `ads_conversion_action_semantic_review_required` gera warning e aparece no dashboard com ressalva; não bloqueia pipeline
+- **Não remover eventos suspeitos sem validação** — `suspicious_events` gera sinalização, não deleção
+- **Separar tráfego non-production de production** — check P usa `classify_url_environment()` com prioridade debug→local→staging→preview→production; uma URL de produção com `?debug=1` é corretamente classificada como `debug`
+- **Não aplicar marts automaticamente** — `docs/sql/mart_*.sql` são propostas; a migration 006 não os referencia
+- **Persistência best-effort** — se tabelas de governance não existirem (pré-migration), os helpers imprimem warning e o pipeline continua; nenhum `sys.exit(1)` por falha de persistência de governance
+- **Parâmetros SQL sanitizados por allowlist** — `_PARAM_ALLOWLIST_RE = re.compile(r"^[a-zA-Z0-9_]+$")` aplicado antes de interpolar nomes de parâmetros na query BQ do check S
