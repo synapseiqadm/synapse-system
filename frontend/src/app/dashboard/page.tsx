@@ -8,8 +8,9 @@ import { createClient } from "@/utils/supabase/client";
 import {
   LayoutGrid, Radio, Settings, TrendingUp, TrendingDown,
   DollarSign, Repeat2, Loader2, AlertCircle, CalendarDays,
-  Search, Tag, Megaphone, Hash, ChevronRight, ShieldCheck, Lightbulb, Building2,
+  Search, Tag, Megaphone, Hash, ChevronRight, ShieldCheck, Lightbulb, Building2, Activity,
 } from "lucide-react";
+import { GrowthIntelligenceView } from "@/components/GrowthIntelligenceView";
 import { DataQualityView } from "@/components/DataQualityView";
 import { InsightsView } from "@/components/InsightsView";
 import { DEFAULT_WORKSPACE } from "@/lib/workspace";
@@ -17,7 +18,7 @@ import { DEFAULT_WORKSPACE } from "@/lib/workspace";
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 type Period  = 7 | 15 | 30;
-type NavItem = "geral" | "campanhas" | "keywords" | "qualidade" | "insights" | "canais" | "configuracoes";
+type NavItem = "geral" | "growth" | "campanhas" | "keywords" | "qualidade" | "insights" | "canais" | "configuracoes";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -152,6 +153,7 @@ function DashSidebar({ active, onNavigate }: { active: NavItem; onNavigate: (n: 
       <nav className="flex-1 p-3 space-y-0.5">
         {/* Geral */}
         <NavBtn id="geral" label="Geral" icon={LayoutGrid} />
+        <NavBtn id="growth" label="Growth Intelligence" icon={Activity} />
 
         {/* Campanhas group */}
         <div>
@@ -644,6 +646,7 @@ function KeywordsView({ keywords, loading }: { keywords: KeywordRow[]; loading: 
 
 const NAV_META: Record<NavItem, { title: string; subtitle: string }> = {
   geral:         { title: "Visão Geral",        subtitle: "Google Ads · kpi_cache_daily"                 },
+  growth:        { title: "Growth Intelligence", subtitle: "GA4 · Funil · Governança · Woke People"      },
   campanhas:     { title: "Campanhas",           subtitle: "campaign_summary · últimos 30 dias"           },
   keywords:      { title: "Palavras-chave",      subtitle: "keyword_analysis · últimos 30 dias"           },
   qualidade:     { title: "Qualidade dos Dados", subtitle: "data_quality_report · A-Data checks"          },
@@ -751,6 +754,8 @@ export default function DashboardPage() {
               setPeriod={setPeriod}
             />
           )}
+
+          {nav === "growth" && <GrowthIntelligenceView />}
 
           {nav === "campanhas" && (
             <CampanhasView campaigns={campaigns} loading={campaignsLoading} />

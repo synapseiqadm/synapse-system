@@ -142,7 +142,7 @@ Todos os componentes importam `DEFAULT_WORKSPACE.id` — o UUID não está dupli
 
 ### 3.5 Dashboard (`/dashboard`)
 
-Client Component com navegação via sidebar. `NavItem` union: `"geral" | "campanhas" | "keywords" | "qualidade" | "insights" | "canais" | "configuracoes"`.
+Client Component com navegação via sidebar. `NavItem` union: `"geral" | "growth" | "campanhas" | "keywords" | "qualidade" | "insights" | "canais" | "configuracoes"`.
 
 #### Vista: Geral
 - Selector de período (7d / 15d / 30d)
@@ -191,6 +191,7 @@ Cliente                     ← seção de tenant
 Woke People                 ← DEFAULT_WORKSPACE.name
 ─────────────────
 ├── Geral
+├── Growth Intelligence     ← novo (v1.3)
 ├── Campanhas ▾
 │   ├── Visão Geral
 │   └── Palavras-chave
@@ -663,8 +664,8 @@ Entregáveis esperados:
 |---|---|---|
 | v1.0 | A-Data Ads + A-Insights + Data Quality | ✅ Concluído |
 | v1.1 | GA4 First Light + Semantic Governance | ✅ Concluído — commit `18b97c9` |
-| v1.2 | Data Marts e API Contracts | 🔜 Próxima etapa |
-| v1.3 | Frontend GA4 MVP | Pendente |
+| v1.2 | Data Marts e API Contracts | ✅ Concluído |
+| v1.3 | Frontend GA4 MVP | ✅ Concluído |
 | v1.4 | Insights determinísticos no frontend | Pendente |
 | v1.5 | AI Growth Analyst Agent | Futuro |
 | v1.6 | AI Executive Report Agent | Futuro |
@@ -854,3 +855,84 @@ Resposta 401 (sem sessão):
 ### 10.8 Próxima Etapa
 
 **v1.3 — Frontend GA4 MVP:** exibir no dashboard os dados reais de GA4 e governança consumindo os endpoints criados na v1.2 — cards de GA4 First Light, eventos principais, funil semântico, sessões pagas e qualidade de tracking.
+
+---
+
+## 11. Atualização Histórica v3.3 — Growth Intelligence Frontend MVP v1.3
+
+**Data:** Maio 2026  
+**Objetivo:** Criar a aba "Growth Intelligence" no dashboard, consumindo os 7 endpoints v1.2 via HTTP `fetch()`, sem migrations, sem backend, sem agentes de IA.
+
+### 11.1 Status da Entrega
+
+| Item | Status | Observação |
+|---|---|---|
+| Nova aba "Growth Intelligence" no dashboard | ✅ Entregue | NavItem `"growth"` adicionado à union type |
+| `GrowthIntelligenceView` criado | ✅ Entregue | `frontend/src/components/GrowthIntelligenceView.tsx` (~700 linhas) |
+| 7 endpoints consumidos via `fetch()` | ✅ | Sem imports diretos de `lib/api/` |
+| `Promise.allSettled` com isolamento por seção | ✅ | Falha de um endpoint não quebra os demais |
+| Tratamento de 401 | ✅ | "Sessão expirada ou usuário não autenticado." |
+| `review_required` visível com badge | ✅ | Badge violeta "Em revisão" nos findings |
+| Ressalva em conversões candidatas | ✅ | GA4 First Light + Funil com disclaimer obrigatório |
+| `npm run build` passou | ✅ | 8 rotas dinâmicas + 1 nova aba estática |
+| `npm run lint` | ⚠️ Falhou por pendência pré-existente + 1 novo NavBtn | Ver §11.4 |
+
+### 11.2 Arquivos Criados/Modificados
+
+| Arquivo | Tipo | O que mudou |
+|---|---|---|
+| `frontend/src/components/GrowthIntelligenceView.tsx` | **Novo** | Componente completo da aba Growth Intelligence |
+| `frontend/src/app/dashboard/page.tsx` | Modificado | `"growth"` no union type, import `Activity` + `GrowthIntelligenceView`, NavBtn no sidebar, entrada em `NAV_META`, renderização condicional |
+
+### 11.3 Estrutura de `GrowthIntelligenceView`
+
+| Seção | Tipo | Endpoint consumido |
+|---|---|---|
+| FilterBar (período 7/15/30d + ambiente) | Controlo | — |
+| 6 Executive Cards (GA4 + Ads + Governance) | Cards | `/growth/overview` |
+| GA4 First Light | Seção | `/growth/overview` |
+| Semantic Funnel | Seção | `/growth/funnel` |
+| Events + Landing Pages | Seção | `/growth/events` |
+| Paid Sessions Quality | Seção | `/growth/paid-sessions` |
+| Governance Summary | Seção | `/governance/summary` |
+| Findings (tabela + accordion) | Seção | `/governance/findings` |
+| Evidence (accordion fechado por defeito) | Seção | `/governance/evidence` |
+
+**Padrão de fetch:**
+```typescript
+async function apiGet<T>(url: string): Promise<T> { ... }
+// 7 chamadas paralelas com Promise.allSettled
+// settle<T>(result): ApiState<T> — isolamento de falhas por seção
+```
+
+### 11.4 Lint — Pendências
+
+| Regra | Ficheiro | Status | Causa |
+|---|---|---|---|
+| `react-hooks/static-components` | `dashboard/page.tsx` | ⚠️ Pré-existente + 1 novo | `NavBtn` declarado dentro de `DashSidebar`; cada NavBtn call gera um erro. Antes da v1.3: 7 erros. Após v1.3: 8 erros (+1 pela nova chamada `<NavBtn id="growth" ...>`). Inevitável sem refatorar o `NavBtn` existente — fora de escopo por decisão explícita. |
+| `react-hooks/set-state-in-effect` | `GrowthIntelligenceView.tsx` | ✅ Corrigido | 7 chamadas `setState` síncronas dentro do effect removidas; estados já inicializam com `loading: true` via `useState(initState())`. |
+
+### 11.5 Decisões Técnicas
+
+| Decisão | Motivo |
+|---|---|
+| `fetch()` HTTP em vez de importar `lib/api/growth.ts` directamente | Componentes cliente não devem importar funções server-side que chamam `createClient()` do servidor |
+| `Promise.allSettled` em vez de `Promise.all` | Garante que falha de um endpoint não impede outros de carregar |
+| Cancellation flag `let cancelled = false` | Evita actualizações de estado após desmontagem do componente |
+| Estados inicializam com `{ loading: true, data: null, error: null }` | Stale-while-revalidate: ao mudar filtros, dados anteriores ficam visíveis até nova resposta chegar (sem flash de loading) |
+| `REVIEW_REQUIRED_CHECKS` como Set constante | Lista extensível de checks que exigem validação do cliente antes de classificar como conversão |
+| Badge "Em revisão" violet em findings `review_required` | Visibilidade explícita de que o evento ainda não foi validado pelo cliente |
+| Ressalva "depende de validação explícita do cliente" em conversões | Obrigação arquitetural — SynapseIQ não decide sozinho qual é a conversão definitiva da Woke |
+| Evidence accordion fechado por defeito | Volume de evidências pode ser grande; evitar poluição visual no carregamento inicial |
+| Máximo 50 itens de evidence exibidos | Protecção contra UI não-responsiva com grandes volumes de dados |
+| Warnings do envelope recolhidos de todas as respostas | Banner único para avisos técnicos (ex: tabela ausente) em vez de exibi-los dentro de cada seção |
+
+### 11.6 Limitações e Próximos Passos (v1.4)
+
+- **Loading durante re-fetch não exibido:** ao mudar período/ambiente, os dados anteriores ficam visíveis até a nova resposta chegar (sem spinner de re-fetch). UX aceitável para MVP.
+- **Gráficos de funil não implementados:** o funil mostra dados tabulares; gráfico visual (ex: Recharts) fica para v1.4.
+- **Nenhum selector de workspace:** dashboard ainda é single-tenant (Woke People). Multi-workspace fica para versão futura.
+- **NavBtn pendência de lint:** `react-hooks/static-components` em `dashboard/page.tsx` permanece. Correção planejada como task de limpeza técnica independente.
+- **`npm run build` e `npm run lint`:** build ✅ limpo; lint ⚠️ 8 erros pré-existentes (NavBtn pattern) + 10 warnings pre-existentes.
+- **Filtro de ambiente é parcial (GA4 = snapshot agregado):** GA4 First Light, Funil Semântico e Executive Cards GA4 usam snapshots pré-agregados da tabela `ga4_first_light_summary`. Esses dados não são segmentados por ambiente — o filtro `environment` é enviado ao servidor mas não altera o resultado GA4 porque `ga4_first_light_summary` não tem coluna `environment`. O filtro de ambiente afeta apenas os blocos de evidência técnica (Governance, Findings, Evidence, Paid Sessions Quality) via `looseJsonMatch` nos dados de `data_quality_report` e `semantic_governance_findings`. Segmentação completa por ambiente requer marts específicos ou views por ambiente — fica para etapa futura.
+- **UX de ambiente implementada:** microcopy no FilterBar ("Filtro de ambiente aplicado apenas aos blocos com evidência técnica disponível..."), label "snapshot agregado" nos cards GA4, nota de snapshot nos blocos GA4 First Light e Funil quando ambiente ≠ Todos, empty state específico por ambiente nos blocos Findings/Evidence/Paid Sessions.
