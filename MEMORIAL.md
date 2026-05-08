@@ -59,13 +59,15 @@ GitHub (synapseiqadm/synapse-system)
 │   ├── 003_data_quality_report.sql
 │   ├── 004_insight_feed.sql
 │   ├── 005_ga4_first_light_summary.sql
-│   └── 006_semantic_governance.sql
+│   ├── 006_semantic_governance.sql
+│   └── 007_semantic_governance_read_policies.sql  ← RLS + SELECT público (MVP)
 │
 ├── docs/sql/
-│   ├── insight_feed_rls_hardening_future.sql    → Draft (NÃO aplicar sem auth)
-│   ├── mart_growth_funnel_events.sql            → Proposta analítica (NÃO aplicar via migration)
-│   ├── mart_paid_sessions_quality.sql           → Proposta analítica (NÃO aplicar via migration)
-│   └── mart_semantic_event_coverage.sql         → Proposta analítica (NÃO aplicar via migration)
+│   ├── insight_feed_rls_hardening_future.sql               → Draft (NÃO aplicar sem auth)
+│   ├── semantic_governance_rls_hardening_future.sql        → Draft (NÃO aplicar sem auth)
+│   ├── mart_growth_funnel_events.sql                       → Proposta analítica (NÃO aplicar via migration)
+│   ├── mart_paid_sessions_quality.sql                      → Proposta analítica (NÃO aplicar via migration)
+│   └── mart_semantic_event_coverage.sql                    → Proposta analítica (NÃO aplicar via migration)
 │
 └── .github/workflows/
     └── sync_data.yml     → GitHub Actions (cron diário 06h BRT)
@@ -536,6 +538,7 @@ created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 | `004_insight_feed.sql` | Cria tabela `insight_feed` com RLS pública e UNIQUE de dedupe |
 | `005_ga4_first_light_summary.sql` | Cria tabela `ga4_first_light_summary` com UNIQUE por workspace+dataset+período |
 | `006_semantic_governance.sql` | Cria `semantic_governance_runs`, `_findings` (FK+CASCADE, GIN details), `_evidence` (FK+CASCADE, GIN evidence_data); 8 índices |
+| `007_semantic_governance_read_policies.sql` | Habilita RLS nas 3 tabelas de governance + políticas SELECT públicas MVP (`TO public USING (true)`) |
 
 **Regra importante:** migrations aplicadas nunca devem ser modificadas — risco de checksum drift no Supabase CLI.
 
@@ -543,7 +546,21 @@ created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 
 Todas as tabelas de dados têm política pública de SELECT (`TO public USING (true)`) porque o dashboard usa a anon key sem autenticação de utilizador. `public.profiles` existe mas tem 0 linhas.
 
-O ficheiro `docs/sql/insight_feed_rls_hardening_future.sql` documenta a política endurecida (workspace-scoped, `TO authenticated`) a aplicar quando:
+| Tabela | RLS | Política SELECT |
+|---|---|---|
+| `kpi_cache_daily` | ✅ | `TO public USING (true)` |
+| `campaign_summary` | ✅ | `TO public USING (true)` |
+| `keyword_analysis` | ✅ | `TO public USING (true)` |
+| `data_quality_report` | ✅ | `TO public USING (true)` (migration 003) |
+| `insight_feed` | ✅ | `TO public USING (true)` (migration 004) |
+| `ga4_first_light_summary` | ✅ | `TO public USING (true)` (migration 005) |
+| `semantic_governance_runs` | ✅ | `TO public USING (true)` (migration 007) |
+| `semantic_governance_findings` | ✅ | `TO public USING (true)` (migration 007) |
+| `semantic_governance_evidence` | ✅ | `TO public USING (true)` (migration 007) |
+
+**Causa raiz do retorno 0 rows nas tabelas de governance:** a migration 006 criou as tabelas sem `ENABLE ROW LEVEL SECURITY` nem políticas. O Supabase habilitou RLS no nível de projeto, bloqueando todas as leituras sem policy. Migration 007 corrige isso.
+
+Os ficheiros `docs/sql/insight_feed_rls_hardening_future.sql` e `docs/sql/semantic_governance_rls_hardening_future.sql` documentam a política endurecida (workspace-scoped, `TO authenticated`) a aplicar quando:
 1. Auth for implementado no dashboard
 2. `public.profiles` estiver populado (`profiles.id = auth.uid()`, `profiles.workspace_id`)
 3. Dashboard usar session tokens em vez da anon key
@@ -625,6 +642,7 @@ O ficheiro `docs/sql/insight_feed_rls_hardening_future.sql` documenta a polític
 | `_PROCESS_ENV` snapshot antes de `load_dotenv()` | Windows remove variável ao definir `=""` — snapshot garante fail-fast correto |
 | `python -m connectors.a_data_sync` | Execução como módulo; resolve imports relativos sem hacks de sys.path no CI |
 | RLS pública em todas as tabelas de dados | Dashboard MVP usa anon key sem auth; `profiles` tem 0 linhas; política endurecida documentada em `docs/sql/` |
+| Migration 006 sem RLS → corrigida em 007 | 006 omitiu `ENABLE ROW LEVEL SECURITY` e policies; Supabase bloqueou reads; 007 adiciona as policies MVP sem alterar estrutura |
 | Migrations aplicadas nunca são modificadas | Risco de checksum drift no Supabase CLI; comentários/anotações vão em documentação, não no SQL |
 | Drafts de migration em `docs/sql/` não em `supabase/migrations/` | Evita aplicação acidental por CI/CD |
 | `data_quality_report` usa INSERT, não upsert | Cada execução é um novo snapshot; dashboard deduplica por `check_name` mantendo mais recente |
@@ -645,6 +663,7 @@ O ficheiro `docs/sql/insight_feed_rls_hardening_future.sql` documenta a polític
 - [ ] Adicionar `NEXT_PUBLIC_DEFAULT_WORKSPACE_*` às variáveis de ambiente no Vercel
 - [ ] Implementar autenticação no dashboard (pré-requisito para RLS endurecida)
 - [ ] Aplicar `docs/sql/insight_feed_rls_hardening_future.sql` quando auth estiver pronto
+- [ ] Aplicar `docs/sql/semantic_governance_rls_hardening_future.sql` quando auth estiver pronto (migration 007 é a versão MVP)
 - [ ] Multi-workspace: selector de workspace na sidebar
 
 ### Próxima etapa liberada — v1.2 Data Marts e API Contracts
@@ -909,7 +928,7 @@ async function apiGet<T>(url: string): Promise<T> { ... }
 
 | Regra | Ficheiro | Status | Causa |
 |---|---|---|---|
-| `react-hooks/static-components` | `dashboard/page.tsx` | ⚠️ Pré-existente + 1 novo | `NavBtn` declarado dentro de `DashSidebar`; cada NavBtn call gera um erro. Antes da v1.3: 7 erros. Após v1.3: 8 erros (+1 pela nova chamada `<NavBtn id="growth" ...>`). Inevitável sem refatorar o `NavBtn` existente — fora de escopo por decisão explícita. |
+| `react-hooks/static-components` | `dashboard/page.tsx` | ✅ Corrigido (task pós-v1.3) | `NavBtn` extraído para escopo de módulo com `active` e `onNavigate` como props explícitas. `npm run lint` agora retorna 0 erros. |
 | `react-hooks/set-state-in-effect` | `GrowthIntelligenceView.tsx` | ✅ Corrigido | 7 chamadas `setState` síncronas dentro do effect removidas; estados já inicializam com `loading: true` via `useState(initState())`. |
 
 ### 11.5 Decisões Técnicas
@@ -932,7 +951,72 @@ async function apiGet<T>(url: string): Promise<T> { ... }
 - **Loading durante re-fetch não exibido:** ao mudar período/ambiente, os dados anteriores ficam visíveis até a nova resposta chegar (sem spinner de re-fetch). UX aceitável para MVP.
 - **Gráficos de funil não implementados:** o funil mostra dados tabulares; gráfico visual (ex: Recharts) fica para v1.4.
 - **Nenhum selector de workspace:** dashboard ainda é single-tenant (Woke People). Multi-workspace fica para versão futura.
-- **NavBtn pendência de lint:** `react-hooks/static-components` em `dashboard/page.tsx` permanece. Correção planejada como task de limpeza técnica independente.
-- **`npm run build` e `npm run lint`:** build ✅ limpo; lint ⚠️ 8 erros pré-existentes (NavBtn pattern) + 10 warnings pre-existentes.
+- **NavBtn pendência de lint:** corrigida em task subsequente — `NavBtn` movido para escopo de módulo (`dashboard/page.tsx`); `npm run lint` agora retorna 0 erros + 10 warnings pré-existentes.
+- **`npm run build` e `npm run lint`:** build ✅ limpo; lint ✅ 0 erros · 10 warnings pré-existentes em outros arquivos.
 - **Filtro de ambiente é parcial (GA4 = snapshot agregado):** GA4 First Light, Funil Semântico e Executive Cards GA4 usam snapshots pré-agregados da tabela `ga4_first_light_summary`. Esses dados não são segmentados por ambiente — o filtro `environment` é enviado ao servidor mas não altera o resultado GA4 porque `ga4_first_light_summary` não tem coluna `environment`. O filtro de ambiente afeta apenas os blocos de evidência técnica (Governance, Findings, Evidence, Paid Sessions Quality) via `looseJsonMatch` nos dados de `data_quality_report` e `semantic_governance_findings`. Segmentação completa por ambiente requer marts específicos ou views por ambiente — fica para etapa futura.
 - **UX de ambiente implementada:** microcopy no FilterBar ("Filtro de ambiente aplicado apenas aos blocos com evidência técnica disponível..."), label "snapshot agregado" nos cards GA4, nota de snapshot nos blocos GA4 First Light e Funil quando ambiente ≠ Todos, empty state específico por ambiente nos blocos Findings/Evidence/Paid Sessions.
+- **Findings Semânticos retornava 0 linhas:** corrigido pela migration 007 (RLS + política SELECT pública). A UI de fallback via `data_quality_shadow` foi mantida como resiliência — se a migration ainda não tiver sido aplicada ao projeto remoto, a tela continua funcional com os dados de sombra.
+
+---
+
+## 12. Decisão de RLS — Tabelas semantic_governance_* (post-v1.3)
+
+**Data:** Maio 2026  
+**Objetivo:** Corrigir retorno de 0 linhas nas tabelas `semantic_governance_runs`, `_findings`, `_evidence`, causado por ausência de políticas de SELECT após habilitação de RLS.
+
+### 12.1 Causa Raiz
+
+Migration 006 criou as três tabelas sem:
+1. `ALTER TABLE ... ENABLE ROW LEVEL SECURITY`
+2. `CREATE POLICY ... FOR SELECT ...`
+
+As migrations anteriores (003, 004, 005) fazem ambos explicitamente. Quando o Supabase habilitou RLS no nível de projeto para as novas tabelas, nenhuma policy existia → PostgreSQL bloqueou todas as leituras para `anon` e `authenticated`, retornando 0 linhas mesmo com dados gravados.
+
+### 12.2 Opções Avaliadas
+
+| Opção | Descrição | Decisão |
+|---|---|---|
+| **A — SELECT público** | `TO public USING (true)` — consistente com 003/004/005 e com MVP | ✅ Escolhida |
+| **B — SELECT authenticated** | `TO authenticated USING (true)` — mais segura, mas inconsistente com MVP atual | Descartada (MVP) |
+| **C — Workspace-scoped** | `profiles.workspace_id = table.workspace_id` | Descartada (`profiles` tem 0 linhas) |
+
+**Motivo da Opção A:** Todas as tabelas de dashboard atualmente usam `TO public USING (true)`. O MEMORIAL documenta isso como decisão consciente de MVP. `profiles` tem 0 linhas. Alterar apenas as tabelas de governance para `TO authenticated` seria inconsistente e criaria comportamento difícil de rastrear.
+
+### 12.3 Arquivos Criados
+
+| Arquivo | Tipo | O que faz |
+|---|---|---|
+| `supabase/migrations/007_semantic_governance_read_policies.sql` | **Nova migration** | `ENABLE ROW LEVEL SECURITY` + `CREATE POLICY ... TO public USING (true)` para as 3 tabelas |
+| `docs/sql/semantic_governance_rls_hardening_future.sql` | **Draft (NÃO aplicar)** | Política endurecida `TO authenticated` + workspace-scoped via `profiles`; caminho de upgrade quando auth estiver pronto |
+
+### 12.4 Como Aplicar a Migration
+
+```bash
+# Via Supabase CLI
+supabase db execute --file supabase/migrations/007_semantic_governance_read_policies.sql
+
+# Via Supabase MCP (apply_migration tool)
+# Via Supabase Studio > SQL Editor (colar conteúdo do arquivo)
+```
+
+**Importante:** a migration deve ser aplicada ao projeto remoto (`lasocsneburvtxqgqhie`) para que o frontend leia as governance tables. Após aplicação, a tela Findings Semânticos passará a exibir os dados reais de `semantic_governance_findings` em vez do fallback `data_quality_shadow`.
+
+### 12.5 Como Testar Após Aplicar
+
+Acessar diretamente os endpoints com o workspace UUID:
+
+```
+GET /api/workspaces/a082fe86-a65f-4c9b-9442-fe775f47e3fc/governance/runs
+GET /api/workspaces/a082fe86-a65f-4c9b-9442-fe775f47e3fc/governance/findings
+GET /api/workspaces/a082fe86-a65f-4c9b-9442-fe775f47e3fc/governance/evidence
+```
+
+Critério de sucesso: `data.runs`, `data.findings`, `data.evidence` com linhas reais em vez de arrays vazios.
+
+### 12.6 Riscos de Segurança
+
+| Risco | Nível | Mitigação |
+|---|---|---|
+| Dados de evidência técnica (JSONB) visíveis via anon key | Médio (MVP consciente) | Mesma exposição que `data_quality_report` já tem; dados não contêm PII nem credenciais |
+| Escalada para produção sem auth | Baixo | `workspace_id` em todas as queries isola o tenant; anon key é read-only por design |
+| Future: workspace B lê dados de workspace A | Não se aplica agora | Um único tenant (Woke). Multi-tenant exige Opção C — documentado em `semantic_governance_rls_hardening_future.sql` |
