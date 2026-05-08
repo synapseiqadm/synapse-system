@@ -26,3 +26,36 @@ dist/
 # OS
 .DS_Store
 Thumbs.db
+
+# local tooling
+.claude/settings.local.json
+
+# supabase local/cli state
+supabase/.temp/
+supabase/.branches/
+
+# python
+.venv/
+venv/
+__pycache__/
+.pytest_cache/
+
+# node
+node_modules/
+**/node_modules/
+
+# next
+.next/
+**/.next/
+out/
+**/out/
+
+# env
+.env
+.env.*
+!.env.example
+
+# local accidental files
+sToken*
+t light*
+tash push*
