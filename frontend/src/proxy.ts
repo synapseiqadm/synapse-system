@@ -34,6 +34,11 @@ export async function proxy(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
   const isAuthRoute = pathname.startsWith("/login");
+  const isApiRoute = pathname.startsWith("/api/");
+
+  if (isApiRoute) {
+    return response;
+  }
 
   if (!user && !isAuthRoute) {
     return NextResponse.redirect(new URL("/login", request.url));

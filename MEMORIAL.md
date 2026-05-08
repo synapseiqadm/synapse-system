@@ -747,3 +747,110 @@ Entregáveis esperados:
 - **Não aplicar marts automaticamente** — `docs/sql/mart_*.sql` são propostas; a migration 006 não os referencia
 - **Persistência best-effort** — se tabelas de governance não existirem (pré-migration), os helpers imprimem warning e o pipeline continua; nenhum `sys.exit(1)` por falha de persistência de governance
 - **Parâmetros SQL sanitizados por allowlist** — `_PARAM_ALLOWLIST_RE = re.compile(r"^[a-zA-Z0-9_]+$")` aplicado antes de interpolar nomes de parâmetros na query BQ do check S
+
+---
+
+## 10. Atualização Histórica v1.2 — Data Marts e API Contracts
+
+**Data:** Maio 2026  
+**Objetivo:** Criar uma camada de leitura estável e segura para o frontend e futuros agentes de IA, com contratos TypeScript e endpoints App Router, sem construir a UI final do GA4 e sem implementar agentes de IA.
+
+### 10.1 Endpoints Criados
+
+8 endpoints App Router sob `/api/workspaces/[workspace_id]/`:
+
+| Endpoint | Handler | Tabelas de origem |
+|---|---|---|
+| `GET /growth/overview` | `getGrowthOverview` | ga4_first_light_summary, campaign_summary, keyword_analysis, data_quality_report, insight_feed |
+| `GET /growth/funnel` | `getGrowthFunnel` | ga4_first_light_summary |
+| `GET /growth/events` | `getGrowthEvents` | ga4_first_light_summary |
+| `GET /growth/paid-sessions` | `getPaidSessionsQuality` | data_quality_report |
+| `GET /governance/summary` | `getGovernanceSummary` | semantic_governance_runs, semantic_governance_findings, semantic_governance_evidence, data_quality_report, insight_feed |
+| `GET /governance/runs` | `getGovernanceRuns` | semantic_governance_runs |
+| `GET /governance/findings` | `getGovernanceFindings` | semantic_governance_findings |
+| `GET /governance/evidence` | `getGovernanceEvidence` | semantic_governance_evidence, semantic_governance_findings |
+
+Todos os endpoints recebem `workspace_id` do path, chamam `handleApiRoute` e suportam filtros opcionais: `date_start`, `date_end`, `environment`, `source`, `medium`, `campaign`, `status`, `severity`, `check_name`, `limit` (default 100, máximo 500).
+
+### 10.2 Types Criados
+
+| Arquivo | Conteúdo |
+|---|---|
+| `frontend/src/types/growth.ts` | `ApiQueryFilters`, `ApiResponseBase`, `Ga4FirstLightSummary`, `CampaignSummaryContract`, `KeywordAnalysisContract`, `GrowthQualityCheck`, `GrowthFunnelEvent`, `GrowthEventsResponse`, `GrowthFunnelResponse`, `GrowthOverviewResponse`, `PaidSessionsQualityContract`, `PaidSessionsQualityResponse` |
+| `frontend/src/types/governance.ts` | `GovernanceRun`, `GovernanceFinding`, `GovernanceEvidence`, `GovernanceSummaryResponse`, `GovernanceRunsResponse`, `GovernanceFindingsResponse`, `GovernanceEvidenceResponse`, `SemanticCoverageContract` |
+
+### 10.3 Helpers Criados
+
+| Arquivo | Função |
+|---|---|
+| `frontend/src/lib/api/common.ts` | `handleApiRoute`, `makeEnvelope`, `parseApiFilters`, `validateWorkspaceId`, `readRows`, `ApiDataError`, `toNumber`, `toNullableNumber`, `asRecord`, `looseJsonMatch`, `isSimpleFilterValue` |
+| `frontend/src/lib/api/governance.ts` | `getGovernanceSummary`, `getGovernanceRuns`, `getGovernanceFindings`, `getGovernanceEvidence` |
+| `frontend/src/lib/api/growth.ts` | `getGrowthOverview`, `getGrowthFunnel`, `getGrowthEvents`, `getPaidSessionsQuality` |
+
+### 10.4 Envelope JSON Estável
+
+Todas as respostas de sucesso seguem o contrato:
+
+```json
+{
+  "ok": true,
+  "workspace_id": "<uuid>",
+  "filters": { "date_start": null, "limit": 100, "..." : "..." },
+  "source_tables": ["tabela_a", "tabela_b"],
+  "generated_at": "2026-05-08T12:00:00.000Z",
+  "warnings": [],
+  "data": { "..." : "..." }
+}
+```
+
+Resposta 401 (sem sessão):
+
+```json
+{
+  "ok": false,
+  "error": {
+    "message": "Unauthorized",
+    "code": "unauthorized",
+    "table": null
+  }
+}
+```
+
+### 10.5 Decisões Arquiteturais
+
+| Decisão | Motivo |
+|---|---|
+| Marts propostos em `docs/sql/` usados como referência analítica, não como migrations | Compatibilidade imediata sem novas migrations; sem risco de checksum drift |
+| APIs protegidas por `supabase.auth.getUser()` dentro de `handleApiRoute` | Proxy libera `/api/` sem redirect HTML, mas a sessão é validada na rota antes de qualquer leitura de dados |
+| `workspace_id` obrigatório em todas as queries (`.eq("workspace_id", workspaceId)`) | Isolamento multi-tenant desde o MVP; nenhuma query lê dados sem filtro de tenant |
+| Tabela ausente retorna `200` com `data` vazio e `warnings` técnico | Pipeline não quebra se uma tabela de governance ainda não existir no Supabase |
+| Warnings do envelope são técnicos do endpoint (ex: tabela ausente) | Findings e warnings de governança ficam dentro de `data`, não no envelope |
+| `parseApiFilters` sanitiza e valida todos os filtros de query string | Evita injeção de valores arbitrários nas queries Supabase |
+| `looseJsonMatch` para filtros de environment/medium/campaign em JSONB | Campos JSONB não permitem `.eq()` simples; matching por serialização é suficiente para MVP |
+| Sem SUPABASE_SERVICE_KEY em `frontend/src` | Service key é exclusiva do backend Python e GitHub Actions |
+
+### 10.6 Status de Validação
+
+| Critério | Status | Observação |
+|---|---|---|
+| `frontend/src/lib/api/route.ts` removido | ✅ | Arquivo acidental do Codex; removido na validação v1.2 |
+| 8 endpoints existem e delegam para `handleApiRoute` | ✅ | Todos os routes confirmados |
+| `handleApiRoute` valida sessão e retorna 401 JSON | ✅ | Sem redirect HTML nas rotas de API |
+| Nenhuma service key em `frontend/src` | ✅ | Busca confirmada vazia |
+| `workspace_id` obrigatório em todas as rotas | ✅ | `validateWorkspaceId` chamado em `handleApiRoute` |
+| Envelope JSON estável | ✅ | `makeEnvelope` padronizado |
+| `npm run build` passou | ✅ | 8 rotas dinâmicas confirmadas no build |
+| `npm run lint` | ⚠️ Falhou por pendência pré-existente | Erro em `dashboard/page.tsx` (regra `react-hooks/static-components`, `NavBtn` declarado dentro do render) — fora do escopo da v1.2; não corrigido |
+| Nenhuma UI, migration ou agente de IA criado | ✅ | Escopo respeitado |
+
+### 10.7 Pendência Técnica Pré-Existente
+
+`npm run lint` falha com erros em `frontend/src/app/dashboard/page.tsx`:
+- Regra violada: `react-hooks/static-components`
+- Causa: componente `NavBtn` declarado dentro da função de render (escopo de componente)
+- Esta pendência existia antes da v1.2 e não foi introduzida por ela
+- Correção planejada para uma task de limpeza futura, sem impacto no build ou funcionamento do dashboard
+
+### 10.8 Próxima Etapa
+
+**v1.3 — Frontend GA4 MVP:** exibir no dashboard os dados reais de GA4 e governança consumindo os endpoints criados na v1.2 — cards de GA4 First Light, eventos principais, funil semântico, sessões pagas e qualidade de tracking.
