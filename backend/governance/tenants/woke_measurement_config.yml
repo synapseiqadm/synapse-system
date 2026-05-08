@@ -1,0 +1,103 @@
+tenant:
+  workspace_id: "a082fe86-a65f-4c9b-9442-fe775f47e3fc"
+  name: "Woke People"
+  slug: "woke"
+
+sources:
+  ga4_dataset: "analytics_289891960"
+  google_ads_dataset: "raw_google_ads_woke"
+  google_ads_customer_id: "6627867790"
+
+domains:
+  production:
+    - "app.wokepeople.com"
+    - "mentor.wokepeople.com"
+  staging:
+    - "mentor-stg.wokepeople.com"
+  local:
+    - "localhost"
+
+conversion_registry:
+  canonical_events:
+    mentor_signup_success:
+      event_name: "Mentor_signup_success"
+      type: "conversion"
+      funnel_stage: "conversion"
+      status: "candidate"
+      aliases:
+        - "Mentor_signup_success"
+      business_status: "candidate"
+      provisional_role: "Evento canônico de cadastro de mentor — aguardando validação pelo cliente"
+      requires_client_validation: true
+
+    mentor_signup_with_auto_signin:
+      event_name: "USER_SIGNUP_MENTOR_WITH_AUTO_SIGNIN"
+      type: "technical_conversion_alias"
+      funnel_stage: "conversion"
+      status: "validated_in_ads_but_semantic_review_required"
+      aliases:
+        - "USER_SIGNUP_MENTOR_WITH_AUTO_SIGNIN"
+      business_status: "provisional"
+      provisional_role: "Alias técnico do fluxo de cadastro com auto-signin — necessita revisão semântica antes de usar como KPI"
+      requires_client_validation: true
+      ads_conversion_action:
+        id: "customers/6627867790/conversionActions/7399635550"
+        name: "USER_SIGNUP_MENTOR_WITH_AUTO_SIGNIN"
+        category: "SUBMIT_LEAD_FORM"
+
+  intermediate_events:
+    app_criar_conta:
+      event_name: "App - Criar Conta"
+      type: "intermediate"
+      funnel_stage: "activation"
+      status: "candidate"
+      aliases:
+        - "App - Criar Conta"
+      business_status: "candidate"
+      provisional_role: "Etapa intermediária de criação de conta no app"
+      requires_client_validation: false
+
+  intent_events:
+    form_start:
+      event_name: "form_start"
+      type: "intent"
+      funnel_stage: "intent"
+      status: "observed"
+      aliases:
+        - "form_start"
+      business_status: "observed"
+      provisional_role: "Sinal de intenção — início de preenchimento de formulário"
+      requires_client_validation: false
+
+  ads_only_conversion_actions:
+    google_ads_lead_form_submit:
+      type: "ads_only_conversion"
+      status: "semantic_review_required"
+      business_status: "provisional"
+      provisional_role: "Ação de conversão do Ads (formulário de lead) sem evento GA4 equivalente validado"
+      requires_client_validation: true
+      ads_conversion_action:
+        id: "customers/6627867790/conversionActions/7223223072"
+        name: "Enviar formulário de lead"
+        category: "SUBMIT_LEAD_FORM"
+      notes: "Ação de conversão observada no Google Ads, sem evento GA4 equivalente validado no registry."
+
+suspicious_events:
+  - event_name: "Analytics"
+    reason: "Evento genérico sem semântica de ação de negócio."
+  - event_name: "LinkedIn"
+    reason: "Evento com nome de canal/plataforma, provavelmente deveria ser outbound_click ou social_click com parâmetros."
+
+attribution:
+  required_paid_url_params:
+    - "gclid"
+    - "utm_source"
+    - "utm_medium"
+    - "utm_campaign"
+    - "campaign_id"
+    - "adgroup_id"
+    - "utm_content"
+
+semantic_checks:
+  enabled: true
+  minimum_overlap_days_for_ads_ga4_validation: 3

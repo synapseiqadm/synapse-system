@@ -253,36 +253,153 @@ def generate_data_quality_context_insight(dq_state: dict) -> list:
     )]
 
 
-def generate_ga4_not_configured_insight(ga4_dataset: str) -> list:
-    """Insight D — informational insight when GA4 dataset is not configured."""
-    if ga4_dataset and ga4_dataset.strip():
+def resolve_obsolete_insights(
+    supabase: Client,
+    insight_type: str,
+    dry_run: bool = False,
+) -> int:
+    """
+    Mark all 'new' insights of the given type across ALL periods as 'resolved'.
+    Used to retire stale informational insights when the underlying condition
+    has been remediated (e.g. ga4_not_configured → GA4 is now configured).
+
+    Returns the number of rows updated (or that would be updated in dry-run).
+    """
+    resp = (
+        supabase.table("insight_feed")
+        .select("id,dedupe_key,date_range_start,date_range_end")
+        .eq("workspace_id", WOKE_WORKSPACE_ID)
+        .eq("insight_type", insight_type)
+        .eq("status", "new")
+        .execute()
+    )
+    rows = resp.data or []
+    if not rows:
+        return 0
+
+    if dry_run:
+        print(
+            f"[insights] --dry-run: would resolve {len(rows)} '{insight_type}' insight(s)",
+            flush=True,
+        )
+        for r in rows:
+            print(
+                f"  resolve {r['dedupe_key']} "
+                f"({r['date_range_start']}..{r['date_range_end']})",
+                flush=True,
+            )
+        return len(rows)
+
+    ids = [r["id"] for r in rows]
+    supabase.table("insight_feed").update({"status": "resolved"}).in_("id", ids).execute()
+    print(
+        f"[insights] resolved {len(ids)} obsolete '{insight_type}' insight(s)",
+        flush=True,
+    )
+    return len(ids)
+
+
+def generate_ga4_no_conversion_events_insight(
+    ga4_dataset: str,
+    ga4_summary: dict,
+) -> list:
+    """Insight E — GA4 available but none of the expected conversion events found."""
+    conversion_events = ga4_summary.get("conversion_events", {})
+    if any(v > 0 for v in conversion_events.values()):
         return []
+
     return [_insight(
-        insight_type   = "ga4_not_configured",
+        insight_type   = "ga4_configured_but_no_conversion_events",
         severity       = "medium",
-        title          = "GA4 ainda não está disponível para análise comportamental",
+        title          = "GA4 disponível, mas nenhum evento de conversão encontrado",
         summary        = (
-            "Os insights atuais usam dados de Google Ads. "
-            "Dados comportamentais do GA4 ainda não estão disponíveis no pipeline."
+            f"O dataset GA4 '{ga4_dataset}' está ativo e com dados no período, "
+            "mas nenhum dos eventos de conversão esperados foi registrado."
         ),
         recommendation = (
-            "Concluir a carga real do GA4 no BigQuery para cruzar mídia, "
-            "engajamento e conversões on-site."
+            "Revisar o contrato de eventos no GTM, as configurações de conversão "
+            "no GA4 e o Growth Measurement Playbook para garantir que os eventos "
+            "estão sendo disparados e mapeados corretamente."
         ),
         evidence       = {
-            "ga4_dataset":      ga4_dataset or "",
-            "date_range_start": str(DATE_RANGE_START),
-            "date_range_end":   str(DATE_RANGE_END),
+            "ga4_dataset":        ga4_dataset,
+            "expected_events":    list(conversion_events.keys()),
+            "conversion_events":  conversion_events,
+            "date_range_start":   str(DATE_RANGE_START),
+            "date_range_end":     str(DATE_RANGE_END),
         },
-        source_tables  = ["data_quality_report"],
-        confidence     = 0.75,
-        dedupe_key     = "ga4_not_configured",
+        source_tables  = ["ga4_first_light_summary"],
+        confidence     = 0.80,
+        dedupe_key     = "ga4_no_conversion_events",
     )]
+
+
+def generate_ga4_status_insight(ga4_dataset: str, ga4_available: bool) -> list:
+    """Insight D — GA4 status insight based on configuration and data availability.
+
+    - GA4_DATASET empty           → ga4_not_configured
+    - GA4_DATASET set, no tables  → ga4_configured_but_incomplete
+    - GA4_DATASET set, has data   → no insight (suppress)
+    """
+    if not ga4_dataset or not ga4_dataset.strip():
+        return [_insight(
+            insight_type   = "ga4_not_configured",
+            severity       = "medium",
+            title          = "GA4 ainda não está disponível para análise comportamental",
+            summary        = (
+                "Os insights atuais usam dados de Google Ads. "
+                "Dados comportamentais do GA4 ainda não estão disponíveis no pipeline."
+            ),
+            recommendation = (
+                "Concluir a carga real do GA4 no BigQuery para cruzar mídia, "
+                "engajamento e conversões on-site."
+            ),
+            evidence       = {
+                "ga4_dataset":      "",
+                "date_range_start": str(DATE_RANGE_START),
+                "date_range_end":   str(DATE_RANGE_END),
+            },
+            source_tables  = ["data_quality_report"],
+            confidence     = 0.75,
+            dedupe_key     = "ga4_not_configured",
+        )]
+
+    if not ga4_available:
+        return [_insight(
+            insight_type   = "ga4_configured_but_incomplete",
+            severity       = "medium",
+            title          = "GA4 configurado mas sem dados disponíveis no período",
+            summary        = (
+                f"O dataset GA4 '{ga4_dataset}' está configurado, mas nenhuma tabela "
+                "events_* foi encontrada no BigQuery para o período analisado."
+            ),
+            recommendation = (
+                "Verificar se o dataset está correto e se o Airbyte/pipeline GA4 "
+                "está exportando eventos para o BigQuery."
+            ),
+            evidence       = {
+                "ga4_dataset":      ga4_dataset,
+                "date_range_start": str(DATE_RANGE_START),
+                "date_range_end":   str(DATE_RANGE_END),
+            },
+            source_tables  = ["data_quality_report"],
+            confidence     = 0.80,
+            dedupe_key     = "ga4_configured_but_incomplete",
+        )]
+
+    # GA4 configured and has data — no informational insight needed
+    return []
 
 
 # ── Orchestration ──────────────────────────────────────────────────────────────
 
-def generate_insights(supabase: Client) -> list:
+def generate_insights(
+    supabase: Client,
+    ga4_available: bool = False,
+    ga4_summary: dict | None = None,
+    measurement_config: dict | None = None,
+    semantic_dq_results: list | None = None,
+) -> list:
     """
     Run all deterministic insight generators and return list of insight dicts.
 
@@ -359,13 +476,36 @@ def generate_insights(supabase: Client) -> list:
     )
     all_insights.extend(dq_ctx)
 
-    ga4_ctx = generate_ga4_not_configured_insight(GA4_DATASET)
+    ga4_ctx = generate_ga4_status_insight(GA4_DATASET, ga4_available)
     print(
-        f"[insights] ga4_not_configured: {len(ga4_ctx)} insight"
+        f"[insights] ga4_status: {len(ga4_ctx)} insight"
         f"{'s' if len(ga4_ctx) != 1 else ''}",
         flush=True,
     )
     all_insights.extend(ga4_ctx)
+
+    if ga4_available and ga4_summary:
+        ga4_conv = generate_ga4_no_conversion_events_insight(GA4_DATASET, ga4_summary)
+        print(
+            f"[insights] ga4_no_conversion_events: {len(ga4_conv)} insight"
+            f"{'s' if len(ga4_conv) != 1 else ''}",
+            flush=True,
+        )
+        all_insights.extend(ga4_conv)
+
+    # ── Semantic insights ──────────────────────────────────────────────────────
+    if measurement_config is not None and semantic_dq_results:
+        try:
+            from semantic_governance import generate_semantic_insights
+            sem_ins = generate_semantic_insights(measurement_config, semantic_dq_results)
+            print(
+                f"[insights] semantic_governance: {len(sem_ins)} insight"
+                f"{'s' if len(sem_ins) != 1 else ''}",
+                flush=True,
+            )
+            all_insights.extend(sem_ins)
+        except Exception as exc:
+            print(f"[insights] semantic governance insights error (skipped): {exc}", flush=True)
 
     return all_insights
 

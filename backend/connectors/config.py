@@ -66,3 +66,10 @@ DATE_RANGE_START = DATE_RANGE_END - timedelta(days=DATE_RANGE_DAYS - 1)
 INSIGHT_MIN_CAMPAIGN_COST = float(os.getenv("INSIGHT_MIN_CAMPAIGN_COST", "50"))
 INSIGHT_MIN_KEYWORD_COST  = float(os.getenv("INSIGHT_MIN_KEYWORD_COST",  "20"))
 ENABLE_INSIGHTS           = os.getenv("ENABLE_INSIGHTS", "true").lower() == "true"
+
+# Semantic Governance — optional; pipeline skips with a warning if file is absent
+_BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+MEASUREMENT_CONFIG_PATH = os.getenv(
+    "MEASUREMENT_CONFIG_PATH",
+    os.path.join(_BACKEND_DIR, "governance", "tenants", "woke_measurement_config.yml"),
+)

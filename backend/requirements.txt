@@ -1,3 +1,4 @@
 supabase
 google-cloud-bigquery
 python-dotenv
+PyYAML

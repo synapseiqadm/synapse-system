@@ -1,0 +1,108 @@
+# Tenant Measurement Config — SynapseIQ Semantic Governance v1.1
+#
+# Copy this file to governance/tenants/<tenant_slug>_measurement_config.yml
+# and fill in the actual values for the tenant.
+# Lines marked [REQUIRED] must be filled. Lines marked [OPTIONAL] can be omitted.
+
+tenant:
+  workspace_id: "<WORKSPACE_UUID>"          # [REQUIRED] UUID from Supabase workspace
+  name: "<Tenant Display Name>"              # [REQUIRED] Human-readable name
+  slug: "<tenant-slug>"                      # [REQUIRED] Short slug used in logs
+
+sources:
+  ga4_dataset: "<bigquery_ga4_dataset>"      # [REQUIRED] e.g. analytics_123456789
+  google_ads_dataset: "<bq_ads_dataset>"     # [REQUIRED] e.g. raw_google_ads_tenant
+  google_ads_customer_id: "<customer_id>"    # [REQUIRED] numeric string, no dashes
+
+domains:
+  production:
+    - "<app.tenant.com>"                     # [REQUIRED] at least one production domain
+  staging:
+    - "<staging.tenant.com>"                 # [OPTIONAL] staging domains to flag in traffic
+  local:
+    - "localhost"                            # [OPTIONAL] local domains to flag in traffic
+
+# Maps business events to semantic roles.
+# canonical_events: the events that represent a real conversion/goal
+# intermediate_events: activation steps between intent and conversion
+# intent_events: signals of early purchase intent (form fills, button clicks, etc.)
+conversion_registry:
+  canonical_events:
+    # Key is a stable slug; event_name is the exact GA4 / Ads name.
+    primary_conversion:
+      event_name: "<GA4_event_name>"
+      type: "conversion"                     # conversion | technical_conversion_alias
+      funnel_stage: "conversion"
+      status: "candidate"                    # candidate | validated | validated_in_ads_but_semantic_review_required
+      aliases:
+        - "<GA4_event_name>"
+      # Three governance fields — fill with real values for each tenant entry.
+      business_status: "candidate"           # [OPTIONAL] candidate | validated | deprecated | provisional
+      provisional_role: ""                   # [OPTIONAL] human description of business role (pt-BR or EN)
+      requires_client_validation: false      # [OPTIONAL] true = client must confirm this event before decisions
+      # Include ads_conversion_action only if this event maps to an Ads conversion action
+      # ads_conversion_action:
+      #   id: "customers/<customer_id>/conversionActions/<action_id>"
+      #   name: "<action_name>"
+      #   category: "SUBMIT_LEAD_FORM"        # Google Ads category enum
+
+  intermediate_events:
+    activation_step:
+      event_name: "<GA4_intermediate_event_name>"
+      type: "intermediate"
+      funnel_stage: "activation"
+      status: "candidate"
+      aliases:
+        - "<GA4_intermediate_event_name>"
+      business_status: "candidate"           # [OPTIONAL]
+      provisional_role: ""                   # [OPTIONAL]
+      requires_client_validation: false      # [OPTIONAL]
+
+  intent_events:
+    intent_signal:
+      event_name: "<GA4_intent_event_name>"
+      type: "intent"
+      funnel_stage: "intent"
+      status: "observed"
+      aliases:
+        - "<GA4_intent_event_name>"
+      business_status: "candidate"           # [OPTIONAL]
+      provisional_role: ""                   # [OPTIONAL]
+      requires_client_validation: false      # [OPTIONAL]
+
+  # Conversion actions that exist only in Google Ads — no equivalent GA4 event validated yet.
+  # Use this section for actions you want to track but haven't mapped to a GA4 event.
+  # status options: semantic_review_required | validated_ads_only
+  ads_only_conversion_actions:
+    example_ads_lead_form_submit:
+      type: "ads_only_conversion"
+      status: "semantic_review_required"
+      business_status: "provisional"         # [OPTIONAL]
+      provisional_role: ""                   # [OPTIONAL]
+      requires_client_validation: true       # [OPTIONAL]
+      ads_conversion_action:
+        id: "customers/0000000000/conversionActions/0000000000"
+        name: "Example Ads Lead Form Submit"
+        category: "SUBMIT_LEAD_FORM"
+      notes: "Ação de conversão do Google Ads sem evento GA4 equivalente validado."
+
+# Events that should NOT exist with generic names — flag for renaming/review
+suspicious_events:
+  - event_name: "<GenericEventName>"
+    reason: "<Why this event name is ambiguous or misleading.>"
+
+# URL parameters expected on paid traffic URLs.
+# All params are validated against ^[a-zA-Z0-9_]+$ before SQL interpolation.
+attribution:
+  required_paid_url_params:
+    - "gclid"
+    - "utm_source"
+    - "utm_medium"
+    - "utm_campaign"
+    - "campaign_id"
+    - "adgroup_id"
+    - "utm_content"
+
+semantic_checks:
+  enabled: true
+  minimum_overlap_days_for_ads_ga4_validation: 3
