@@ -35,6 +35,7 @@ GitHub (synapseiqadm/synapse-system)
 │
 ├── backend/
 │   ├── connectors/
+│   │   ├── semantic_registry.py     → Loader do semantic registry (v1.3.1)
 │   │   ├── a_data_sync.py           → Entry point (orquestra todos os módulos)
 │   │   ├── config.py                → Configuração e fail-fast
 │   │   ├── sync_runs.py             → Auditoria de execuções
@@ -45,6 +46,7 @@ GitHub (synapseiqadm/synapse-system)
 │   │   ├── semantic_governance.py   → Governança semântica (8 checks + persistência)
 │   │   └── sync_woke.py             → DEPRECATED (mantido para referência)
 │   ├── governance/
+│   │   ├── semantic_registry.yml    → Registry canônico de checks semânticos (v1.3.1)
 │   │   ├── templates/
 │   │   │   └── tenant_measurement_config.template.yml
 │   │   └── tenants/
@@ -62,9 +64,11 @@ GitHub (synapseiqadm/synapse-system)
 │   ├── 006_semantic_governance.sql
 │   └── 007_semantic_governance_read_policies.sql  ← RLS + SELECT público (MVP)
 │
-├── docs/sql/
-│   ├── insight_feed_rls_hardening_future.sql               → Draft (NÃO aplicar sem auth)
-│   ├── semantic_governance_rls_hardening_future.sql        → Draft (NÃO aplicar sem auth)
+├── docs/
+│   ├── semantic_model.md                                   → Vocabulário canônico de conceitos (v1.3.1)
+│   └── sql/
+│       ├── insight_feed_rls_hardening_future.sql           → Draft (NÃO aplicar sem auth)
+│       ├── semantic_governance_rls_hardening_future.sql    → Draft (NÃO aplicar sem auth)
 │   ├── mart_growth_funnel_events.sql                       → Proposta analítica (NÃO aplicar via migration)
 │   ├── mart_paid_sessions_quality.sql                      → Proposta analítica (NÃO aplicar via migration)
 │   └── mart_semantic_event_coverage.sql                    → Proposta analítica (NÃO aplicar via migration)
@@ -685,6 +689,7 @@ Entregáveis esperados:
 | v1.1 | GA4 First Light + Semantic Governance | ✅ Concluído — commit `18b97c9` |
 | v1.2 | Data Marts e API Contracts | ✅ Concluído |
 | v1.3 | Frontend GA4 MVP | ✅ Concluído |
+| v1.3.1 | Semantic Model and Rule Registry | ✅ Concluído |
 | v1.4 | Insights determinísticos no frontend | Pendente |
 | v1.5 | AI Growth Analyst Agent | Futuro |
 | v1.6 | AI Executive Report Agent | Futuro |
@@ -1018,8 +1023,77 @@ Critério de sucesso: `data.runs`, `data.findings`, `data.evidence` com linhas r
 | Risco | Nível | Mitigação |
 |---|---|---|
 | Dados de evidência técnica (JSONB) visíveis via anon key | Médio (MVP consciente) | Mesma exposição que `data_quality_report` já tem; dados não contêm PII nem credenciais |
-| Escalada para produção sem auth | Baixo | `workspace_id` em todas as queries isola o tenant; anon key é read-only por design |
+| Escalada para produção sem auth | Médio | `workspace_id` nas queries reduz erro acidental, mas não é fronteira de segurança quando policies públicas estão ativas — qualquer portador da anon key lê todos os workspaces. Para multi-tenant real, será obrigatório auth + RLS workspace-scoped via `profiles` |
 | Future: workspace B lê dados de workspace A | Não se aplica agora | Um único tenant (Woke). Multi-tenant exige Opção C — documentado em `semantic_governance_rls_hardening_future.sql` |
+
+---
+
+## 13. v1.3.1 — Semantic Model and Rule Registry
+
+**Data:** Maio 2026  
+**Objetivo:** Criar fundação preventiva de vocabulário e metadados semânticos antes de avançar para v1.4 e v1.5, evitando espalhamento semântico entre Python, SQL, YAML, frontend e agentes de IA.
+
+### 13.1 Motivo da Etapa
+
+Com v1.1–v1.3 concluídos, os mesmos conceitos (check, finding, evidence, conversão candidata, review_required) já aparecem em:
+- Labels de código Python (`semantic_governance.py`, `data_quality.py`)
+- Nomes de tabelas SQL e campos JSONB
+- YAML de configuração de tenant (`woke_measurement_config.yml`)
+- Constantes TypeScript (`FINDING_NAMES`, `REVIEW_REQUIRED_CHECKS` em `GrowthIntelligenceView.tsx`)
+- Textos de UI (microcopy, disclaimers, badges)
+
+Sem um modelo canônico, a v1.4 (insights no frontend) e a v1.5 (AI Growth Analyst Agent) introduziriam novos labels inconsistentes e lógica de apresentação divergente.
+
+### 13.2 Risco Documentado
+
+**Espalhamento semântico:** quando um mesmo conceito (ex: "conversão") é interpretado de forma diferente em camadas distintas do sistema — pipeline, banco, frontend, agente — sem fonte única de verdade. O risco aumenta a cada nova feature que introduz labels sem consultar o modelo central.
+
+### 13.3 Arquivos Criados
+
+| Arquivo | Tipo | O que contém |
+|---|---|---|
+| `docs/semantic_model.md` | **Novo** | Glossário canônico de 13 conceitos; regra central de separação de camadas; tratamento esperado por UI e agentes |
+| `backend/governance/semantic_registry.yml` | **Novo** | Metadados de todos os 8 checks semânticos atuais (L–S): label, category, severity_default, source_platform, description, business_impact, recommended_action, ui_group, evidence_types, can_generate_insight, requires_client_validation |
+| `backend/connectors/semantic_registry.py` | **Novo** | Loader Python com `load_semantic_registry()` e `get_check_metadata()`; sem imports de outros connectors; sem conexão externa; retorno seguro em qualquer erro |
+
+### 13.4 Checks Registrados em semantic_registry.yml
+
+| Check | ui_group | requires_client_validation | can_generate_insight |
+|---|---|---|---|
+| `ga4_ads_overlap_insufficient` | data_quality | false | true |
+| `ga4_conversion_registry_mismatch` | conversion_quality | **true** | true |
+| `ads_conversion_action_not_in_registry` | conversion_quality | **true** | true |
+| `ads_conversion_action_semantic_review_required` | conversion_quality | **true** | true |
+| `ga4_non_production_traffic_detected` | traffic_quality | false | false |
+| `ga4_suspicious_event_names_detected` | data_quality | false | false |
+| `paid_sessions_without_funnel_progress` | funnel_quality | false | true |
+| `utm_campaign_empty_in_paid_urls` | attribution_quality | false | true |
+
+### 13.5 Regra do Registry — Leitura Obrigatória Antes de Exibir
+
+**Regra:** nenhum frontend, insight determinístico ou agente de IA deve criar `label`, `business_impact` ou `recommended_action` para um check sem consultar o `semantic_registry.yml`.
+
+- Se o `check_name` existir no registry → usar os campos `label`, `description`, `business_impact` e `recommended_action` do registry como fonte canônica.
+- Se o `check_name` **não** existir no registry → exibir fallback técnico com o nome técnico do check e marcar o item como `registry_missing` na UI. Nunca inventar label ou recomendação.
+
+Esta regra aplica-se a:
+- Componentes React que renderizam findings/insights (`FindingsSection`, `InsightsView`)
+- Gerador de insights determinísticos (`insights.py`) quando adicionar novos tipos semânticos
+- Qualquer agente de IA que gere recomendações a partir de findings
+
+**Por que não inverter:** o registry é a fronteira entre o que o pipeline observou (finding) e o que o produto comunica (label + recomendação). Cruzar essa fronteira sem o registry quebra a rastreabilidade e introduz labels divergentes por versão ou por camada.
+
+---
+
+### 13.6 Sem Refatoração de Runtime
+
+A v1.3.1 é exclusivamente documental e preparatória. Nenhum módulo do pipeline foi alterado. O `semantic_registry.py` existe mas não é importado por nenhum connector ainda — a integração ao runtime é trabalho da v1.4.
+
+### 13.7 Próximas Etapas que Devem Usar Este Registry
+
+- **v1.4 Insights determinísticos no frontend:** os labels exibidos no `InsightsView` devem vir do registry, não de constantes hardcoded.
+- **v1.5 AI Growth Analyst Agent:** o agente só pode gerar recomendações para checks com `can_generate_insight: true`. Checks com `requires_client_validation: true` devem sempre escalar para revisão humana antes de qualquer ação.
+- **Futuros checks (T, U, …):** devem ser adicionados ao registry antes de serem implementados no pipeline.
 
 
 Como a SQL foi aplicada manualmente no Supabase Studio, mas o db push não pôde ser usado por desalinhamento do histórico remoto, ainda existe uma dívida técnica:
