@@ -8,16 +8,17 @@ import { createClient } from "@/utils/supabase/client";
 import {
   LayoutGrid, Radio, Settings, TrendingUp, TrendingDown,
   DollarSign, Repeat2, Loader2, AlertCircle, CalendarDays,
-  Search, Tag, Megaphone, Hash, ChevronRight, ShieldCheck,
+  Search, Tag, Megaphone, Hash, ChevronRight, ShieldCheck, Lightbulb,
 } from "lucide-react";
 import { DataQualityView } from "@/components/DataQualityView";
+import { InsightsView } from "@/components/InsightsView";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 const WOKE_WORKSPACE_ID = "a082fe86-a65f-4c9b-9442-fe775f47e3fc";
 
 type Period  = 7 | 15 | 30;
-type NavItem = "geral" | "campanhas" | "keywords" | "qualidade" | "canais" | "configuracoes";
+type NavItem = "geral" | "campanhas" | "keywords" | "qualidade" | "insights" | "canais" | "configuracoes";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -180,6 +181,7 @@ function DashSidebar({ active, onNavigate }: { active: NavItem; onNavigate: (n: 
 
         {/* Bottom items */}
         <NavBtn id="qualidade"     label="Qualidade"     icon={ShieldCheck} />
+        <NavBtn id="insights"      label="Insights"      icon={Lightbulb}   />
         <NavBtn id="canais"        label="Canais"        icon={Radio}       />
         <NavBtn id="configuracoes" label="Configurações" icon={Settings}    />
       </nav>
@@ -635,6 +637,7 @@ const NAV_META: Record<NavItem, { title: string; subtitle: string }> = {
   campanhas:     { title: "Campanhas",           subtitle: "campaign_summary · últimos 30 dias"           },
   keywords:      { title: "Palavras-chave",      subtitle: "keyword_analysis · últimos 30 dias"           },
   qualidade:     { title: "Qualidade dos Dados", subtitle: "data_quality_report · A-Data checks"          },
+  insights:      { title: "Insights",            subtitle: "insight_feed · A-Insights v1 determinístico"  },
   canais:        { title: "Canais",              subtitle: "Integrações e conectores ativos"              },
   configuracoes: { title: "Configurações",       subtitle: "Preferências do workspace"                    },
 };
@@ -744,6 +747,8 @@ export default function DashboardPage() {
           )}
 
           {nav === "qualidade" && <DataQualityView />}
+
+          {nav === "insights" && <InsightsView />}
 
           {(nav === "canais" || nav === "configuracoes") && (
             <div className="flex flex-col items-center justify-center h-64 text-zinc-700">

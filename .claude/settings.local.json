@@ -23,7 +23,13 @@
       "mcp__claude_ai_Vercel__list_projects",
       "mcp__claude_ai_Vercel__get_project",
       "mcp__claude_ai_Vercel__get_deployment",
-      "mcp__claude_ai_Vercel__list_deployments"
+      "mcp__claude_ai_Vercel__list_deployments",
+      "Bash(\"D:/dev/synapse/.venv/Scripts/python.exe\" -m connectors.a_data_sync --dry-run)",
+      "Bash(\"D:/dev/synapse/.venv/Scripts/python.exe\" -m connectors.a_data_sync)",
+      "mcp__claude_ai_Supabase__execute_sql",
+      "mcp__claude_ai_Supabase__list_tables",
+      "Bash(node -e \"const p = require\\('./package.json'\\); console.log\\('lucide:', p.dependencies['lucide-react']\\); console.log\\('next:', p.dependencies['next']\\); console.log\\('react:', p.dependencies['react']\\)\")",
+      "Bash(npx tsc *)"
     ]
   }
 }
