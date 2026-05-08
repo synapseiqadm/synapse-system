@@ -22,3 +22,11 @@ CREATE INDEX IF NOT EXISTS idx_dqr_checked_at   ON public.data_quality_report (c
 CREATE INDEX IF NOT EXISTS idx_dqr_status       ON public.data_quality_report (status);
 CREATE INDEX IF NOT EXISTS idx_dqr_severity     ON public.data_quality_report (severity);
 CREATE INDEX IF NOT EXISTS idx_dqr_date_range   ON public.data_quality_report (date_range_start, date_range_end);
+
+ALTER TABLE public.data_quality_report ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Leitura pública qualidade"
+  ON public.data_quality_report
+  FOR SELECT
+  TO public
+  USING (true);

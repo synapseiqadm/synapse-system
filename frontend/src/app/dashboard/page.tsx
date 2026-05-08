@@ -8,15 +8,16 @@ import { createClient } from "@/utils/supabase/client";
 import {
   LayoutGrid, Radio, Settings, TrendingUp, TrendingDown,
   DollarSign, Repeat2, Loader2, AlertCircle, CalendarDays,
-  Search, Tag, Megaphone, Hash, ChevronRight,
+  Search, Tag, Megaphone, Hash, ChevronRight, ShieldCheck,
 } from "lucide-react";
+import { DataQualityView } from "@/components/DataQualityView";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 const WOKE_WORKSPACE_ID = "a082fe86-a65f-4c9b-9442-fe775f47e3fc";
 
 type Period  = 7 | 15 | 30;
-type NavItem = "geral" | "campanhas" | "keywords" | "canais" | "configuracoes";
+type NavItem = "geral" | "campanhas" | "keywords" | "qualidade" | "canais" | "configuracoes";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -178,8 +179,9 @@ function DashSidebar({ active, onNavigate }: { active: NavItem; onNavigate: (n: 
         <div className="h-px bg-zinc-800/60 my-1.5 mx-1" />
 
         {/* Bottom items */}
-        <NavBtn id="canais"        label="Canais"        icon={Radio}    />
-        <NavBtn id="configuracoes" label="Configurações" icon={Settings} />
+        <NavBtn id="qualidade"     label="Qualidade"     icon={ShieldCheck} />
+        <NavBtn id="canais"        label="Canais"        icon={Radio}       />
+        <NavBtn id="configuracoes" label="Configurações" icon={Settings}    />
       </nav>
 
       {/* Workspace badge */}
@@ -629,11 +631,12 @@ function KeywordsView({ keywords, loading }: { keywords: KeywordRow[]; loading: 
 // ─── Header config per nav ────────────────────────────────────────────────────
 
 const NAV_META: Record<NavItem, { title: string; subtitle: string }> = {
-  geral:         { title: "Visão Geral",     subtitle: "Google Ads · kpi_cache_daily"                 },
-  campanhas:     { title: "Campanhas",        subtitle: "campaign_summary · últimos 30 dias"           },
-  keywords:      { title: "Palavras-chave",  subtitle: "keyword_analysis · últimos 30 dias"           },
-  canais:        { title: "Canais",           subtitle: "Integrações e conectores ativos"              },
-  configuracoes: { title: "Configurações",    subtitle: "Preferências do workspace"                    },
+  geral:         { title: "Visão Geral",        subtitle: "Google Ads · kpi_cache_daily"                 },
+  campanhas:     { title: "Campanhas",           subtitle: "campaign_summary · últimos 30 dias"           },
+  keywords:      { title: "Palavras-chave",      subtitle: "keyword_analysis · últimos 30 dias"           },
+  qualidade:     { title: "Qualidade dos Dados", subtitle: "data_quality_report · A-Data checks"          },
+  canais:        { title: "Canais",              subtitle: "Integrações e conectores ativos"              },
+  configuracoes: { title: "Configurações",       subtitle: "Preferências do workspace"                    },
 };
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -739,6 +742,8 @@ export default function DashboardPage() {
           {nav === "keywords" && (
             <KeywordsView keywords={keywords} loading={keywordsLoading} />
           )}
+
+          {nav === "qualidade" && <DataQualityView />}
 
           {(nav === "canais" || nav === "configuracoes") && (
             <div className="flex flex-col items-center justify-center h-64 text-zinc-700">
