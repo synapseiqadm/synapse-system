@@ -62,3 +62,7 @@ os.environ.setdefault("GOOGLE_APPLICATION_CREDENTIALS", r"D:\dev\synapse\credent
 DATE_RANGE_DAYS  = int(os.getenv("DATE_RANGE_DAYS", "30"))
 DATE_RANGE_END   = date.today()
 DATE_RANGE_START = DATE_RANGE_END - timedelta(days=DATE_RANGE_DAYS - 1)
+
+INSIGHT_MIN_CAMPAIGN_COST = float(os.getenv("INSIGHT_MIN_CAMPAIGN_COST", "50"))
+INSIGHT_MIN_KEYWORD_COST  = float(os.getenv("INSIGHT_MIN_KEYWORD_COST",  "20"))
+ENABLE_INSIGHTS           = os.getenv("ENABLE_INSIGHTS", "true").lower() == "true"

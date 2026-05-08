@@ -22,10 +22,12 @@ from config import (
     GCP_PROJECT_ID, BQ_LOCATION, GA4_DATASET,
     SUPABASE_URL, SUPABASE_SERVICE_KEY,
     DATE_RANGE_START, DATE_RANGE_END,
+    ENABLE_INSIGHTS,
 )
 from sync_runs import start_sync_run, finish_sync_run_success, finish_sync_run_error
 from sync_ads import sync_campaigns, sync_keywords, ga4_real_data_available
 from data_quality import run_data_quality_checks, write_quality_reports
+from insights import generate_insights, write_insights
 
 
 def main(dry_run: bool = False) -> None:
@@ -105,6 +107,30 @@ def main(dry_run: bool = False) -> None:
     except Exception as exc:
         print(f"[data_quality] ERROR (technical failure): {exc}", flush=True)
         sys.exit(1)
+
+    # ── insights ────────────────────────────────────────────────────────────────
+    # Technical errors (connection, bad query, write failure) → exit 1.
+    # Quality blocking is data signal, not a pipeline error.
+    if ENABLE_INSIGHTS:
+        try:
+            ins_results = generate_insights(supabase)
+            if dry_run:
+                print(
+                    f"[insights] --dry-run: would upsert {len(ins_results)} insights",
+                    flush=True,
+                )
+                for ins in ins_results:
+                    print(
+                        f"  [{ins['severity']:8}] {ins['insight_type']}: {ins['title']}",
+                        flush=True,
+                    )
+            else:
+                write_insights(supabase, ins_results)
+        except Exception as exc:
+            print(f"[insights] ERROR (technical failure): {exc}", flush=True)
+            sys.exit(1)
+    else:
+        print("[insights] ENABLE_INSIGHTS=false — skipping", flush=True)
 
     print(
         f"[a_data_sync] done — campaigns={n_campaigns} keywords={n_keywords}",
