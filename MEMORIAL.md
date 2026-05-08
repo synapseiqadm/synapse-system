@@ -953,8 +953,8 @@ async function apiGet<T>(url: string): Promise<T> { ... }
 - **Nenhum selector de workspace:** dashboard ainda é single-tenant (Woke People). Multi-workspace fica para versão futura.
 - **NavBtn pendência de lint:** corrigida em task subsequente — `NavBtn` movido para escopo de módulo (`dashboard/page.tsx`); `npm run lint` agora retorna 0 erros + 10 warnings pré-existentes.
 - **`npm run build` e `npm run lint`:** build ✅ limpo; lint ✅ 0 erros · 10 warnings pré-existentes em outros arquivos.
-- **Filtro de ambiente é parcial (GA4 = snapshot agregado):** GA4 First Light, Funil Semântico e Executive Cards GA4 usam snapshots pré-agregados da tabela `ga4_first_light_summary`. Esses dados não são segmentados por ambiente — o filtro `environment` é enviado ao servidor mas não altera o resultado GA4 porque `ga4_first_light_summary` não tem coluna `environment`. O filtro de ambiente afeta apenas os blocos de evidência técnica (Governance, Findings, Evidence, Paid Sessions Quality) via `looseJsonMatch` nos dados de `data_quality_report` e `semantic_governance_findings`. Segmentação completa por ambiente requer marts específicos ou views por ambiente — fica para etapa futura.
-- **UX de ambiente implementada:** microcopy no FilterBar ("Filtro de ambiente aplicado apenas aos blocos com evidência técnica disponível..."), label "snapshot agregado" nos cards GA4, nota de snapshot nos blocos GA4 First Light e Funil quando ambiente ≠ Todos, empty state específico por ambiente nos blocos Findings/Evidence/Paid Sessions.
+
+snapshot nos blocos GA4 First Light e Funil quando ambiente ≠ Todos, empty state específico por ambiente nos blocos Findings/Evidence/Paid Sessions.
 - **Findings Semânticos retornava 0 linhas:** corrigido pela migration 007 (RLS + política SELECT pública). A UI de fallback via `data_quality_shadow` foi mantida como resiliência — se a migration ainda não tiver sido aplicada ao projeto remoto, a tela continua funcional com os dados de sombra.
 
 ---
@@ -1020,3 +1020,10 @@ Critério de sucesso: `data.runs`, `data.findings`, `data.evidence` com linhas r
 | Dados de evidência técnica (JSONB) visíveis via anon key | Médio (MVP consciente) | Mesma exposição que `data_quality_report` já tem; dados não contêm PII nem credenciais |
 | Escalada para produção sem auth | Baixo | `workspace_id` em todas as queries isola o tenant; anon key é read-only por design |
 | Future: workspace B lê dados de workspace A | Não se aplica agora | Um único tenant (Woke). Multi-tenant exige Opção C — documentado em `semantic_governance_rls_hardening_future.sql` |
+
+
+Como a SQL foi aplicada manualmente no Supabase Studio, mas o db push não pôde ser usado por desalinhamento do histórico remoto, ainda existe uma dívida técnica:
+
+chore: reconcile Supabase remote migration history with local repository
+
+Não precisa resolver agora. Mas deve ficar registrado como próxima tarefa técnica, porque o Supabase remoto tem migrations timestamp que não existem no diretório local.
