@@ -111,28 +111,35 @@ function buildSummary(rows: KpiRow[]): Summary {
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
+interface NavBtnProps {
+  id: NavItem;
+  label: string;
+  icon: React.ElementType;
+  sub?: boolean;
+  active: NavItem;
+  onNavigate: (n: NavItem) => void;
+}
+
+function NavBtn({ id, label, icon: Icon, sub = false, active, onNavigate }: NavBtnProps) {
+  const isActive = active === id;
+  return (
+    <button
+      onClick={() => onNavigate(id)}
+      className={`w-full flex items-center gap-2.5 rounded-lg text-sm transition-colors
+        ${sub ? "px-2.5 py-1.5" : "px-3 py-2"}
+        ${isActive
+          ? "bg-indigo-600/15 text-indigo-300 font-medium"
+          : "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/50"
+        }`}
+    >
+      <Icon size={sub ? 13 : 15} />
+      {label}
+    </button>
+  );
+}
+
 function DashSidebar({ active, onNavigate }: { active: NavItem; onNavigate: (n: NavItem) => void }) {
   const inCampanhasGroup = active === "campanhas" || active === "keywords";
-
-  function NavBtn({
-    id, label, icon: Icon, sub = false,
-  }: { id: NavItem; label: string; icon: React.ElementType; sub?: boolean }) {
-    const isActive = active === id;
-    return (
-      <button
-        onClick={() => onNavigate(id)}
-        className={`w-full flex items-center gap-2.5 rounded-lg text-sm transition-colors
-          ${sub ? "px-2.5 py-1.5" : "px-3 py-2"}
-          ${isActive
-            ? "bg-indigo-600/15 text-indigo-300 font-medium"
-            : "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/50"
-          }`}
-      >
-        <Icon size={sub ? 13 : 15} />
-        {label}
-      </button>
-    );
-  }
 
   return (
     <aside className="w-52 flex-shrink-0 flex flex-col bg-[#09090b] border-r border-zinc-800/60">
@@ -152,8 +159,8 @@ function DashSidebar({ active, onNavigate }: { active: NavItem; onNavigate: (n: 
 
       <nav className="flex-1 p-3 space-y-0.5">
         {/* Geral */}
-        <NavBtn id="geral" label="Geral" icon={LayoutGrid} />
-        <NavBtn id="growth" label="Growth Intelligence" icon={Activity} />
+        <NavBtn id="geral"  label="Geral"              icon={LayoutGrid} active={active} onNavigate={onNavigate} />
+        <NavBtn id="growth" label="Growth Intelligence" icon={Activity}   active={active} onNavigate={onNavigate} />
 
         {/* Campanhas group */}
         <div>
@@ -182,8 +189,8 @@ function DashSidebar({ active, onNavigate }: { active: NavItem; onNavigate: (n: 
               ${inCampanhasGroup ? "max-h-24 opacity-100 mt-0.5" : "max-h-0 opacity-0"}`}
           >
             <div className="ml-3 pl-3 border-l border-zinc-800/70 space-y-0.5 py-0.5">
-              <NavBtn id="campanhas" label="Visão Geral"    icon={Megaphone} sub />
-              <NavBtn id="keywords"  label="Palavras-chave" icon={Hash}      sub />
+              <NavBtn id="campanhas" label="Visão Geral"    icon={Megaphone} sub active={active} onNavigate={onNavigate} />
+              <NavBtn id="keywords"  label="Palavras-chave" icon={Hash}      sub active={active} onNavigate={onNavigate} />
             </div>
           </div>
         </div>
@@ -192,10 +199,10 @@ function DashSidebar({ active, onNavigate }: { active: NavItem; onNavigate: (n: 
         <div className="h-px bg-zinc-800/60 my-1.5 mx-1" />
 
         {/* Bottom items */}
-        <NavBtn id="qualidade"     label="Qualidade"     icon={ShieldCheck} />
-        <NavBtn id="insights"      label="Insights"      icon={Lightbulb}   />
-        <NavBtn id="canais"        label="Canais"        icon={Radio}       />
-        <NavBtn id="configuracoes" label="Configurações" icon={Settings}    />
+        <NavBtn id="qualidade"     label="Qualidade"     icon={ShieldCheck} active={active} onNavigate={onNavigate} />
+        <NavBtn id="insights"      label="Insights"      icon={Lightbulb}   active={active} onNavigate={onNavigate} />
+        <NavBtn id="canais"        label="Canais"        icon={Radio}       active={active} onNavigate={onNavigate} />
+        <NavBtn id="configuracoes" label="Configurações" icon={Settings}    active={active} onNavigate={onNavigate} />
       </nav>
 
       {/* Workspace badge */}
