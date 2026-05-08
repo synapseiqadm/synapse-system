@@ -29,10 +29,12 @@ interface KpiRow {
 }
 
 interface CampaignRow {
+  campaign_id: string;
   campaign_name: string;
   cost: number;
   conversions: number;
   roas: number;
+  date_range_start: string;
 }
 
 interface KeywordRow {
@@ -471,7 +473,7 @@ function CampanhasView({ campaigns, loading }: { campaigns: CampaignRow[]; loadi
             {[...campaigns]
               .sort((a, b) => b.cost - a.cost)
               .map((c) => (
-                <CampaignCard key={c.campaign_name} campaign={c} totalCost={totalCost} />
+                <CampaignCard key={`${c.campaign_id}-${c.date_range_start}`} campaign={c} totalCost={totalCost} />
               ))}
           </div>
         )}
@@ -688,7 +690,7 @@ export default function DashboardPage() {
       setCampaignsLoading(true);
       const { data } = await supabase
         .from("campaign_summary")
-        .select("campaign_name, cost, conversions, roas")
+        .select("campaign_id, campaign_name, cost, conversions, roas, date_range_start")
         .eq("workspace_id", DEFAULT_WORKSPACE.id)
         .order("cost", { ascending: false });
       setCampaigns((data as CampaignRow[]) ?? []);
