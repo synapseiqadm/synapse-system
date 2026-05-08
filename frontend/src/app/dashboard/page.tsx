@@ -8,14 +8,13 @@ import { createClient } from "@/utils/supabase/client";
 import {
   LayoutGrid, Radio, Settings, TrendingUp, TrendingDown,
   DollarSign, Repeat2, Loader2, AlertCircle, CalendarDays,
-  Search, Tag, Megaphone, Hash, ChevronRight, ShieldCheck, Lightbulb,
+  Search, Tag, Megaphone, Hash, ChevronRight, ShieldCheck, Lightbulb, Building2,
 } from "lucide-react";
 import { DataQualityView } from "@/components/DataQualityView";
 import { InsightsView } from "@/components/InsightsView";
+import { DEFAULT_WORKSPACE } from "@/lib/workspace";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
-
-const WOKE_WORKSPACE_ID = "a082fe86-a65f-4c9b-9442-fe775f47e3fc";
 
 type Period  = 7 | 15 | 30;
 type NavItem = "geral" | "campanhas" | "keywords" | "qualidade" | "insights" | "canais" | "configuracoes";
@@ -139,6 +138,15 @@ function DashSidebar({ active, onNavigate }: { active: NavItem; onNavigate: (n: 
         <span className="text-sm font-bold text-white tracking-tight">SynapseIQ</span>
       </div>
 
+      {/* Active tenant */}
+      <div className="px-5 py-2.5 border-b border-zinc-800/60 bg-zinc-900/40">
+        <p className="text-[9px] text-zinc-600 uppercase tracking-wider mb-1">Cliente</p>
+        <div className="flex items-center gap-1.5">
+          <Building2 size={11} className="text-indigo-400 flex-shrink-0" />
+          <p className="text-xs font-semibold text-zinc-300 truncate">{DEFAULT_WORKSPACE.name}</p>
+        </div>
+      </div>
+
       <nav className="flex-1 p-3 space-y-0.5">
         {/* Geral */}
         <NavBtn id="geral" label="Geral" icon={LayoutGrid} />
@@ -190,10 +198,10 @@ function DashSidebar({ active, onNavigate }: { active: NavItem; onNavigate: (n: 
       <div className="p-4 border-t border-zinc-800/60">
         <div className="flex items-center gap-2.5">
           <div className="w-7 h-7 rounded-full bg-gradient-to-br from-indigo-500 to-violet-500 flex items-center justify-center text-xs font-bold text-white">
-            W
+            {DEFAULT_WORKSPACE.slug[0].toUpperCase()}
           </div>
           <div>
-            <p className="text-xs font-semibold text-zinc-200">Woke</p>
+            <p className="text-xs font-semibold text-zinc-200">{DEFAULT_WORKSPACE.name}</p>
             <p className="text-[10px] text-zinc-600">workspace</p>
           </div>
         </div>
@@ -344,7 +352,7 @@ function GeralView({
         {!loading && chart.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-48 text-zinc-700">
             <p className="text-sm">Sem dados para o período selecionado.</p>
-            <p className="text-xs mt-1">Verifique o WOKE_WORKSPACE_ID e execute o script de sync.</p>
+            <p className="text-xs mt-1">Verifique o DEFAULT_WORKSPACE.id e execute o script de sync.</p>
           </div>
         ) : (
           <ResponsiveContainer width="100%" height={300}>
@@ -665,7 +673,7 @@ export default function DashboardPage() {
       const { data, error: sbError } = await supabase
         .from("kpi_cache_daily")
         .select("date, metric_name, metric_value, channel")
-        .eq("workspace_id", WOKE_WORKSPACE_ID)
+        .eq("workspace_id", DEFAULT_WORKSPACE.id)
         .gte("date", sinceDate(period))
         .order("date", { ascending: true });
       if (sbError) { setError(sbError.message); setLoading(false); return; }
@@ -681,7 +689,7 @@ export default function DashboardPage() {
       const { data } = await supabase
         .from("campaign_summary")
         .select("campaign_name, cost, conversions, roas")
-        .eq("workspace_id", WOKE_WORKSPACE_ID)
+        .eq("workspace_id", DEFAULT_WORKSPACE.id)
         .order("cost", { ascending: false });
       setCampaigns((data as CampaignRow[]) ?? []);
       setCampaignsLoading(false);
@@ -695,7 +703,7 @@ export default function DashboardPage() {
       const { data } = await supabase
         .from("keyword_analysis")
         .select("keyword, campaign_name, match_type, clicks, cost, conversions")
-        .eq("workspace_id", WOKE_WORKSPACE_ID)
+        .eq("workspace_id", DEFAULT_WORKSPACE.id)
         .order("conversions", { ascending: false });
       setKeywords((data as KeywordRow[]) ?? []);
       setKeywordsLoading(false);
@@ -718,10 +726,14 @@ export default function DashboardPage() {
 
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
-        <header className="h-14 flex items-center px-6 border-b border-zinc-800/60 flex-shrink-0">
+        <header className="h-14 flex items-center justify-between px-6 border-b border-zinc-800/60 flex-shrink-0">
           <div>
             <h1 className="text-sm font-bold text-white">{meta.title}</h1>
             <p className="text-[10px] text-zinc-600 font-mono">{meta.subtitle}</p>
+          </div>
+          <div className="flex items-center gap-1.5 bg-indigo-500/10 border border-indigo-500/20 rounded-full px-2.5 py-1">
+            <Building2 size={11} className="text-indigo-400" />
+            <span className="text-[11px] font-medium text-indigo-300">{DEFAULT_WORKSPACE.name}</span>
           </div>
         </header>
 

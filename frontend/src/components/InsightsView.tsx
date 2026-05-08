@@ -4,10 +4,9 @@ import { createClient } from "@/utils/supabase/client";
 import {
   Loader2, AlertCircle, CheckCircle2, AlertTriangle, XCircle,
   ChevronDown, ChevronUp, Clock, Lightbulb, Search,
-  Database, RefreshCw,
+  Database, RefreshCw, Building2,
 } from "lucide-react";
-
-const WOKE_WORKSPACE_ID = "a082fe86-a65f-4c9b-9442-fe775f47e3fc";
+import { DEFAULT_WORKSPACE } from "@/lib/workspace";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -381,7 +380,7 @@ export function InsightsView() {
       const { data, error: sbError } = await supabase
         .from("insight_feed")
         .select("*")
-        .eq("workspace_id", WOKE_WORKSPACE_ID)
+        .eq("workspace_id", DEFAULT_WORKSPACE.id)
         .order("updated_at", { ascending: false })
         .limit(100);
       if (sbError) { setError(sbError.message); setLoading(false); return; }
@@ -509,6 +508,14 @@ export function InsightsView() {
 
   return (
     <>
+      {/* Workspace label */}
+      <div className="flex items-center gap-1.5 mb-4">
+        <Building2 size={11} className="text-zinc-600" />
+        <span className="text-[11px] text-zinc-500 font-mono">
+          Insights do workspace: <span className="text-zinc-400">{DEFAULT_WORKSPACE.name}</span>
+        </span>
+      </div>
+
       {/* ── Summary cards ────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 xl:grid-cols-5 gap-4 mb-6">
 
