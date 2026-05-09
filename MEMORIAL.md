@@ -1124,3 +1124,97 @@ As convenÃ§Ãµes de nomenclatura sÃ£o incompatÃ­veis (snake_case vs CamelCase/SCR
 **Impacto:** O Check K pode reportar falsos negativos (eventos esperados ausentes) ou falsos positivos se a lista nÃ£o refletir a implementaÃ§Ã£o GA4 real do cliente. O `EVENT_FUNNEL_MAP` no frontend (`measurementConfig.ts`) deriva do YAML, nÃ£o de `sync_ga4.py`, criando uma terceira fonte de verdade para eventos de conversÃ£o.
 
 **ResoluÃ§Ã£o pendente:** Requer confirmaÃ§Ã£o do cliente sobre quais eventos realmente disparam no GA4. Uma vez confirmados, `GA4_CONVERSION_EVENTS` em `sync_ga4.py` deve ser alinhado com `canonical_events` no YAML (ou vice-versa), e o espelho `measurementConfig.ts` deve ser atualizado. NÃ£o alterar sem validaÃ§Ã£o do cliente.
+
+## v1.4.2 KPI Cache Daily Refresh
+
+Em 2026-05-09, foi corrigida a defasagem da tabela `kpi_cache_daily`, usada pela Visão Geral do Dashboard Woke.
+
+### Problema identificado
+
+A tela Visão Geral exibia dados de ROAS e custo apenas até `2026-05-07`, enquanto as tabelas base de Google Ads já estavam atualizadas até `2026-05-09`.
+
+Validação inicial:
+
+- `kpi_cache_daily.max(date) = 2026-05-07`
+- `campaign_summary.max(date_range_end) = 2026-05-09`
+- `keyword_analysis.max(date_range_end) = 2026-05-09`
+
+Os registros de `sync_runs` confirmavam execuções recentes com sucesso para:
+
+- `google_ads / campaign_summary`
+- `google_ads / keyword_analysis`
+
+Mas não havia execução recente para:
+
+- `google_ads / kpi_cache_daily`
+
+### Causa
+
+O pipeline de Google Ads atualizava `campaign_summary` e `keyword_analysis`, mas não recalculava `kpi_cache_daily`.
+
+Como a Visão Geral depende de `kpi_cache_daily`, o gráfico de custo, conversões e ROAS ficava defasado mesmo com os dados base atualizados.
+
+### Correção realizada
+
+Foi adicionada a função `sync_kpi_cache_daily()` em `backend/connectors/sync_ads.py`.
+
+A função consulta a tabela diária de Google Ads no BigQuery:
+
+`p_ads_CampaignStats_6627867790`
+
+E gera três métricas por dia:
+
+- `total_cost`
+- `conversions`
+- `roas`
+
+A atualização é feita via upsert em `public.kpi_cache_daily`, usando o conflito:
+
+`workspace_id,date,metric_name,channel`
+
+Também foi adicionado um bloco em `backend/connectors/a_data_sync.py` para executar `sync_kpi_cache_daily()` entre `sync_campaigns()` e `sync_keywords()`, com registro próprio em `sync_runs`:
+
+- `source_platform = google_ads`
+- `data_source = kpi_cache_daily`
+
+### Validação
+
+Dry-run executado com sucesso:
+
+- Período: `2026-04-10..2026-05-09`
+- 29 dias retornados do BigQuery
+- 87 registros previstos
+- 29 dias × 3 métricas
+
+Execução real executada com sucesso:
+
+- `sync_kpi_cache_daily` retornou 29 dias
+- 87 registros foram upsertados
+- `sync_runs` registrou `google_ads / kpi_cache_daily / success`
+- `rows_loaded = 87`
+- `error_message = null`
+
+Validação final:
+
+- `kpi_cache_daily.max(date) = 2026-05-08`
+- `kpi_cache_daily.max(updated_at) = 2026-05-09 15:54 UTC`
+- `campaign_summary.max(date_range_end) = 2026-05-09`
+- `keyword_analysis.max(date_range_end) = 2026-05-09`
+
+A data máxima de `kpi_cache_daily` ficou em `2026-05-08` porque a query usa `HAVING cost > 0`, excluindo dias sem custo.
+
+### Observações
+
+A execução real gerou duas entradas de `sync_runs` para `kpi_cache_daily`, ambas com sucesso e `rows_loaded = 87`. Como o upsert é idempotente, isso não gerou duplicidade em `kpi_cache_daily`.
+
+O ROAS passou a ser calculado como:
+
+`metrics_conversions_value / total_cost`
+
+Isso reflete a configuração atual de valor de conversão no Google Ads. Caso o cliente espere ROAS financeiro, será necessário validar a qualidade do `metrics_conversions_value` como dívida futura de mensuração.
+
+### Commit técnico
+
+Implementação publicada na `main`:
+
+`8d2bb25 feat: refresh kpi cache daily in google ads sync`
