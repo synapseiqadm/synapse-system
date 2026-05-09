@@ -1,10 +1,18 @@
 name: Sync BigQuery → Supabase
 
 on:
-  schedule:
-    # 06:00 AM Brasília (UTC-3) = 09:00 UTC
-    - cron: "0 9 * * *"
-  workflow_dispatch: # permite trigger manual pelo GitHub UI
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run — validate pipeline without writing to Supabase"
+        type: boolean
+        default: true
+
+# Prevent overlapping runs. A new trigger waits for the in-progress run to finish
+# rather than cancelling it (cancel-in-progress: false) to avoid partial writes.
+concurrency:
+  group: a-data-sync-woke
+  cancel-in-progress: false
 
 jobs:
   sync:
@@ -29,32 +37,40 @@ jobs:
         run: pip install -r backend/requirements.txt
 
       # ── 3. Google credentials ─────────────────────────────────────────────
-      # Store the full contents of credentials.json as secret GOOGLE_CREDENTIALS_JSON
+      # Secret GOOGLE_CREDENTIALS_JSON must contain the full service account JSON.
+      # Passing via env var avoids shell-interpolation issues with special characters.
       - name: Write Google service account credentials
-        run: |
-          echo '${{ secrets.GOOGLE_CREDENTIALS_JSON }}' > /tmp/gcp_credentials.json
+        env:
+          GOOGLE_CREDS: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+        run: printenv GOOGLE_CREDS > /tmp/gcp_credentials.json
 
       # ── 4. Run sync ───────────────────────────────────────────────────────
-      - name: Sync campaigns and keywords
+      - name: Run data sync
         env:
-          SUPABASE_URL:                  ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY:          ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SUPABASE_URL:                   ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY:           ${{ secrets.SUPABASE_SERVICE_KEY }}
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp_credentials.json
-          PYTHONIOENCODING: "utf-8"
-          APP_ENV: "production"
-          ALLOW_MOCK_DATA: "false"
-          WOKE_WORKSPACE_ID: "a082fe86-a65f-4c9b-9442-fe775f47e3fc"
-          GCP_PROJECT_ID: "synapsesystem"
-          BQ_LOCATION: "southamerica-east1"
-          GOOGLE_ADS_DATASET: "raw_google_ads_woke"
-          GOOGLE_ADS_CUSTOMER_ID: "6627867790"
-          GA4_DATASET: ""
-          DATE_RANGE_DAYS: "30"
+          PYTHONIOENCODING:               "utf-8"
+          APP_ENV:                        "production"
+          ALLOW_MOCK_DATA:                "false"
+          WOKE_WORKSPACE_ID:              "a082fe86-a65f-4c9b-9442-fe775f47e3fc"
+          GCP_PROJECT_ID:                 "synapsesystem"
+          BQ_LOCATION:                    "southamerica-east1"
+          GOOGLE_ADS_DATASET:             "raw_google_ads_woke"
+          GOOGLE_ADS_CUSTOMER_ID:         "6627867790"
+          GA4_DATASET:                    ""
+          DATE_RANGE_DAYS:                "30"
+          ENABLE_INSIGHTS:                "true"
         run: |
           cd backend
-          python -m connectors.a_data_sync
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            python -m connectors.a_data_sync --dry-run
+          else
+            python -m connectors.a_data_sync
+          fi
 
       # ── 5. Cleanup ────────────────────────────────────────────────────────
+      # Runs even on failure to ensure credentials are never left on the runner.
       - name: Remove credentials file
         if: always()
         run: rm -f /tmp/gcp_credentials.json

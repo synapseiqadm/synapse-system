@@ -582,16 +582,19 @@ Os ficheiros `docs/sql/insight_feed_rls_hardening_future.sql` e `docs/sql/semant
 
 ### 6.1 GitHub Actions â€” `.github/workflows/sync_data.yml`
 
-- **Trigger:** `cron: "0 9 * * *"` (06:00 BRT) + `workflow_dispatch`
+- **Trigger:** `workflow_dispatch` (manual) â€” `schedule` nÃ£o configurado ainda (pendente validaÃ§Ã£o do dry-run em CI)
+- **Input:** `dry_run` (boolean, default `true`) â€” protege contra escrita acidental em produÃ§Ã£o
+- **Concurrency:** `group: a-data-sync-woke`, `cancel-in-progress: false` â€” enfileira triggers simultÃ¢neos em vez de cancelar
 - **Runner:** `ubuntu-latest`
-- **Comando:** `cd backend && python -m connectors.a_data_sync`
+- **Comando:** `cd backend && python -m connectors.a_data_sync [--dry-run]`
+- **Credenciais GCP:** secret `GOOGLE_CREDENTIALS_JSON` â†’ `printenv` â†’ `/tmp/gcp_credentials.json` â†’ removido com `if: always()`
 - **Secrets necessÃ¡rios:**
 
 | Secret | Uso |
 |---|---|
 | `GOOGLE_CREDENTIALS_JSON` | ConteÃºdo JSON da service account GCP |
-| `SUPABASE_URL` | URL do projecto Supabase |
-| `SUPABASE_SERVICE_KEY` | Chave service (server-only) |
+| `SUPABASE_URL` | URL do projeto Supabase |
+| `SUPABASE_SERVICE_KEY` | Chave service (nunca a anon key) |
 
 - **VariÃ¡veis de ambiente injectadas pelo workflow:**
 
@@ -604,7 +607,9 @@ Os ficheiros `docs/sql/insight_feed_rls_hardening_future.sql` e `docs/sql/semant
 | `BQ_LOCATION` | `southamerica-east1` |
 | `GOOGLE_ADS_DATASET` | `raw_google_ads_woke` |
 | `GOOGLE_ADS_CUSTOMER_ID` | `6627867790` |
+| `GA4_DATASET` | `""` (GA4 desativado em CI â€” pendente confirmaÃ§Ã£o de acesso da service account a `analytics_289891960`) |
 | `DATE_RANGE_DAYS` | `30` |
+| `ENABLE_INSIGHTS` | `true` |
 
 ### 6.2 Vercel â€” ProduÃ§Ã£o
 
@@ -1127,66 +1132,66 @@ As convenÃ§Ãµes de nomenclatura sÃ£o incompatÃ­veis (snake_case vs CamelCase/SCR
 
 ## v1.4.2 KPI Cache Daily Refresh
 
-Em 2026-05-09, foi corrigida a defasagem da tabela `kpi_cache_daily`, usada pela Visão Geral do Dashboard Woke.
+Em 2026-05-09, foi corrigida a defasagem da tabela `kpi_cache_daily`, usada pela Visï¿½o Geral do Dashboard Woke.
 
 ### Problema identificado
 
-A tela Visão Geral exibia dados de ROAS e custo apenas até `2026-05-07`, enquanto as tabelas base de Google Ads já estavam atualizadas até `2026-05-09`.
+A tela Visï¿½o Geral exibia dados de ROAS e custo apenas atï¿½ `2026-05-07`, enquanto as tabelas base de Google Ads jï¿½ estavam atualizadas atï¿½ `2026-05-09`.
 
-Validação inicial:
+Validaï¿½ï¿½o inicial:
 
 - `kpi_cache_daily.max(date) = 2026-05-07`
 - `campaign_summary.max(date_range_end) = 2026-05-09`
 - `keyword_analysis.max(date_range_end) = 2026-05-09`
 
-Os registros de `sync_runs` confirmavam execuções recentes com sucesso para:
+Os registros de `sync_runs` confirmavam execuï¿½ï¿½es recentes com sucesso para:
 
 - `google_ads / campaign_summary`
 - `google_ads / keyword_analysis`
 
-Mas não havia execução recente para:
+Mas nï¿½o havia execuï¿½ï¿½o recente para:
 
 - `google_ads / kpi_cache_daily`
 
 ### Causa
 
-O pipeline de Google Ads atualizava `campaign_summary` e `keyword_analysis`, mas não recalculava `kpi_cache_daily`.
+O pipeline de Google Ads atualizava `campaign_summary` e `keyword_analysis`, mas nï¿½o recalculava `kpi_cache_daily`.
 
-Como a Visão Geral depende de `kpi_cache_daily`, o gráfico de custo, conversões e ROAS ficava defasado mesmo com os dados base atualizados.
+Como a Visï¿½o Geral depende de `kpi_cache_daily`, o grï¿½fico de custo, conversï¿½es e ROAS ficava defasado mesmo com os dados base atualizados.
 
-### Correção realizada
+### Correï¿½ï¿½o realizada
 
-Foi adicionada a função `sync_kpi_cache_daily()` em `backend/connectors/sync_ads.py`.
+Foi adicionada a funï¿½ï¿½o `sync_kpi_cache_daily()` em `backend/connectors/sync_ads.py`.
 
-A função consulta a tabela diária de Google Ads no BigQuery:
+A funï¿½ï¿½o consulta a tabela diï¿½ria de Google Ads no BigQuery:
 
 `p_ads_CampaignStats_6627867790`
 
-E gera três métricas por dia:
+E gera trï¿½s mï¿½tricas por dia:
 
 - `total_cost`
 - `conversions`
 - `roas`
 
-A atualização é feita via upsert em `public.kpi_cache_daily`, usando o conflito:
+A atualizaï¿½ï¿½o ï¿½ feita via upsert em `public.kpi_cache_daily`, usando o conflito:
 
 `workspace_id,date,metric_name,channel`
 
-Também foi adicionado um bloco em `backend/connectors/a_data_sync.py` para executar `sync_kpi_cache_daily()` entre `sync_campaigns()` e `sync_keywords()`, com registro próprio em `sync_runs`:
+Tambï¿½m foi adicionado um bloco em `backend/connectors/a_data_sync.py` para executar `sync_kpi_cache_daily()` entre `sync_campaigns()` e `sync_keywords()`, com registro prï¿½prio em `sync_runs`:
 
 - `source_platform = google_ads`
 - `data_source = kpi_cache_daily`
 
-### Validação
+### Validaï¿½ï¿½o
 
 Dry-run executado com sucesso:
 
-- Período: `2026-04-10..2026-05-09`
+- Perï¿½odo: `2026-04-10..2026-05-09`
 - 29 dias retornados do BigQuery
 - 87 registros previstos
-- 29 dias × 3 métricas
+- 29 dias ï¿½ 3 mï¿½tricas
 
-Execução real executada com sucesso:
+Execuï¿½ï¿½o real executada com sucesso:
 
 - `sync_kpi_cache_daily` retornou 29 dias
 - 87 registros foram upsertados
@@ -1194,27 +1199,53 @@ Execução real executada com sucesso:
 - `rows_loaded = 87`
 - `error_message = null`
 
-Validação final:
+Validaï¿½ï¿½o final:
 
 - `kpi_cache_daily.max(date) = 2026-05-08`
 - `kpi_cache_daily.max(updated_at) = 2026-05-09 15:54 UTC`
 - `campaign_summary.max(date_range_end) = 2026-05-09`
 - `keyword_analysis.max(date_range_end) = 2026-05-09`
 
-A data máxima de `kpi_cache_daily` ficou em `2026-05-08` porque a query usa `HAVING cost > 0`, excluindo dias sem custo.
+A data mï¿½xima de `kpi_cache_daily` ficou em `2026-05-08` porque a query usa `HAVING cost > 0`, excluindo dias sem custo.
 
-### Observações
+### Observaï¿½ï¿½es
 
-A execução real gerou duas entradas de `sync_runs` para `kpi_cache_daily`, ambas com sucesso e `rows_loaded = 87`. Como o upsert é idempotente, isso não gerou duplicidade em `kpi_cache_daily`.
+A execuï¿½ï¿½o real gerou duas entradas de `sync_runs` para `kpi_cache_daily`, ambas com sucesso e `rows_loaded = 87`. Como o upsert ï¿½ idempotente, isso nï¿½o gerou duplicidade em `kpi_cache_daily`.
 
 O ROAS passou a ser calculado como:
 
 `metrics_conversions_value / total_cost`
 
-Isso reflete a configuração atual de valor de conversão no Google Ads. Caso o cliente espere ROAS financeiro, será necessário validar a qualidade do `metrics_conversions_value` como dívida futura de mensuração.
+Isso reflete a configuraï¿½ï¿½o atual de valor de conversï¿½o no Google Ads. Caso o cliente espere ROAS financeiro, serï¿½ necessï¿½rio validar a qualidade do `metrics_conversions_value` como dï¿½vida futura de mensuraï¿½ï¿½o.
 
-### Commit técnico
+### Commit tï¿½cnico
 
-Implementação publicada na `main`:
+Implementaï¿½ï¿½o publicada na `main`:
 
 `8d2bb25 feat: refresh kpi cache daily in google ads sync`
+
+
+---
+
+## v1.4.3 Scheduled Data Sync MVP
+
+**Data:** Maio 2026
+
+### Objetivo
+
+Remover a dependencia de execucao local do pipeline `a_data_sync.py`, adicionando um workflow GitHub Actions para trigger manual com opcao de dry-run e protecao contra execucoes simultaneas.
+
+### O que foi entregue
+
+Edicao de `.github/workflows/sync_data.yml`:
+
+- `workflow_dispatch` com input `dry_run` (boolean, default `true`) -- permite teste seguro pelo GitHub UI sem risco de escrita em producao
+- `concurrency: group: a-data-sync-woke, cancel-in-progress: false` -- segundo trigger aguarda fila em vez de cancelar run em andamento
+- Credenciais GCP via `printenv GOOGLE_CREDS > /tmp/gcp_credentials.json` em vez de `echo ${{ secret }}` -- evita quebra por aspas simples no JSON e exposicao em mensagens de erro
+- `ENABLE_INSIGHTS: "true"` adicionado explicitamente
+- `schedule` removido desta entrega -- re-adicionar apos validacao do dry-run em CI
+
+### Pendencias abertas
+
+- `GA4_DATASET` permanece `""` em CI. Para ativar GA4 + checks L-S + insights GA4 no pipeline agendado, confirmar que a service account tem acesso ao dataset `analytics_289891960` e mudar o valor no workflow.
+- Apos dry-run validado pelo GitHub UI, re-adicionar cron `"0 9 * * *"` (06:00 BRT) ao workflow.
