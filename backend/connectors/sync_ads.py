@@ -189,3 +189,72 @@ def sync_keywords(
     ).execute()
     print(f"[sync_keywords] upserted {len(records)} records", flush=True)
     return len(records)
+
+
+def sync_kpi_cache_daily(
+    bq_client: bigquery.Client,
+    supabase: Client,
+    dry_run: bool = False,
+) -> int:
+    STATS_TABLE = f"p_ads_CampaignStats_{GOOGLE_ADS_CUSTOMER_ID}"
+
+    QUERY = f"""
+        SELECT
+            s.segments_date                          AS date,
+            SUM(s.metrics_cost_micros) / 1000000     AS total_cost,
+            SUM(s.metrics_conversions)               AS conversions,
+            SUM(s.metrics_conversions_value)         AS conv_value
+        FROM `{GCP_PROJECT_ID}.{GOOGLE_ADS_DATASET}.{STATS_TABLE}` s
+        WHERE s.segments_date BETWEEN '{DATE_RANGE_START}' AND '{DATE_RANGE_END}'
+        GROUP BY s.segments_date
+        HAVING SUM(s.metrics_cost_micros) / 1000000 > 0
+        ORDER BY s.segments_date
+    """
+
+    print(f"[sync_kpi_cache_daily] source={STATS_TABLE} period={DATE_RANGE_START}..{DATE_RANGE_END}", flush=True)
+
+    results = list(bq_client.query(QUERY).result())
+    n_days = len(results)
+    print(f"[sync_kpi_cache_daily] {n_days} days from BigQuery", flush=True)
+
+    if not results:
+        print("[sync_kpi_cache_daily] no days with cost > 0 — skipping upsert", flush=True)
+        return 0
+
+    now = datetime.now(timezone.utc).isoformat()
+    records = []
+    for row in results:
+        date       = str(row.date)
+        total_cost = round(float(row.total_cost) if row.total_cost else 0.0, 4)
+        conversions = round(float(row.conversions) if row.conversions else 0.0, 4)
+        conv_value  = float(row.conv_value) if row.conv_value else 0.0
+        roas        = round(conv_value / total_cost, 4) if total_cost > 0 else 0.0
+
+        for metric_name, metric_value in (
+            ("total_cost",  total_cost),
+            ("conversions", conversions),
+            ("roas",        roas),
+        ):
+            records.append({
+                "workspace_id": WOKE_WORKSPACE_ID,
+                "date":         date,
+                "metric_name":  metric_name,
+                "metric_value": metric_value,
+                "channel":      "google_ads",
+                "updated_at":   now,
+            })
+
+    if dry_run:
+        print(
+            f"[sync_kpi_cache_daily] --dry-run: {n_days} days × 3 metrics = {len(records)} records"
+            f" would be upserted",
+            flush=True,
+        )
+        return len(records)
+
+    supabase.table("kpi_cache_daily").upsert(
+        records,
+        on_conflict="workspace_id,date,metric_name,channel",
+    ).execute()
+    print(f"[sync_kpi_cache_daily] upserted {len(records)} records ({n_days} days)", flush=True)
+    return len(records)

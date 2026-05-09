@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-A-Data Sync — entry point for the SynapseIQ data pipeline.
+A-Data Sync - entry point for the SynapseIQ data pipeline.
 
 Usage (from backend/):
     python -m connectors.a_data_sync
@@ -25,7 +25,7 @@ from config import (
     ENABLE_INSIGHTS, MEASUREMENT_CONFIG_PATH,
 )
 from sync_runs import start_sync_run, finish_sync_run_success, finish_sync_run_error
-from sync_ads import sync_campaigns, sync_keywords
+from sync_ads import sync_campaigns, sync_keywords, sync_kpi_cache_daily
 from sync_ga4 import (
     sync_ga4_first_light,
     get_ga4_tables,
@@ -49,7 +49,7 @@ def main(dry_run: bool = False) -> None:
     bq_client = bigquery.Client(project=GCP_PROJECT_ID, location=BQ_LOCATION)
     supabase  = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
-    # ── Measurement config (optional — pipeline continues if absent) ───────
+    # ── Measurement config (optional - pipeline continues if absent) ───────
     measurement_config = load_measurement_config(MEASUREMENT_CONFIG_PATH)
 
     # ── campaigns ──────────────────────────────────────────────────────────
@@ -72,6 +72,28 @@ def main(dry_run: bool = False) -> None:
         print(f"[sync_campaigns] ERROR: {exc}", flush=True)
         if run_id:
             finish_sync_run_error(supabase, run_id, str(exc))
+        sys.exit(1)
+
+    # ── kpi_cache_daily ────────────────────────────────────────────────────
+    kpi_run_id = None
+    if not dry_run:
+        kpi_run_id = start_sync_run(
+            supabase,
+            workspace_id     = WOKE_WORKSPACE_ID,
+            source_platform  = "google_ads",
+            data_source      = "kpi_cache_daily",
+            is_mock          = False,
+            date_range_start = DATE_RANGE_START,
+            date_range_end   = DATE_RANGE_END,
+        )
+    try:
+        n_kpi = sync_kpi_cache_daily(bq_client, supabase, dry_run=dry_run)
+        if kpi_run_id:
+            finish_sync_run_success(supabase, kpi_run_id, n_kpi)
+    except Exception as exc:
+        print(f"[sync_kpi_cache_daily] ERROR: {exc}", flush=True)
+        if kpi_run_id:
+            finish_sync_run_error(supabase, kpi_run_id, str(exc))
         sys.exit(1)
 
     # ── keywords ───────────────────────────────────────────────────────────
@@ -119,13 +141,13 @@ def main(dry_run: bool = False) -> None:
                 resolve_obsolete_insights(supabase, "ga4_not_configured", dry_run=dry_run)
                 resolve_obsolete_insights(supabase, "ga4_configured_but_incomplete", dry_run=dry_run)
             else:
-                print("[a_data_sync] GA4 dataset configured but no events_* tables found — skipping", flush=True)
+                print("[a_data_sync] GA4 dataset configured but no events_* tables found - skipping", flush=True)
                 resolve_obsolete_insights(supabase, "ga4_not_configured", dry_run=dry_run)
         except Exception as exc:
             print(f"[sync_ga4] ERROR (technical failure): {exc}", flush=True)
             sys.exit(1)
     else:
-        print("[a_data_sync] GA4_DATASET not configured — skipping GA4 sync", flush=True)
+        print("[a_data_sync] GA4_DATASET not configured - skipping GA4 sync", flush=True)
 
     # ── data quality ────────────────────────────────────────────────────────
     # Technical errors (connection, bad query, write failure) → exit 1.
@@ -183,10 +205,10 @@ def main(dry_run: bool = False) -> None:
             print(f"[insights] ERROR (technical failure): {exc}", flush=True)
             sys.exit(1)
     else:
-        print("[insights] ENABLE_INSIGHTS=false — skipping", flush=True)
+        print("[insights] ENABLE_INSIGHTS=false - skipping", flush=True)
 
     print(
-        f"[a_data_sync] done — campaigns={n_campaigns} keywords={n_keywords}",
+        f"[a_data_sync] done - campaigns={n_campaigns} kpi={n_kpi} keywords={n_keywords}",
         flush=True,
     )
 
