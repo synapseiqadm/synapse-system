@@ -1132,66 +1132,66 @@ As convenções de nomenclatura são incompatíveis (snake_case vs CamelCase/SCR
 
 ## v1.4.2 KPI Cache Daily Refresh
 
-Em 2026-05-09, foi corrigida a defasagem da tabela `kpi_cache_daily`, usada pela Vis�o Geral do Dashboard Woke.
+Em 2026-05-09, foi corrigida a defasagem da tabela `kpi_cache_daily`, usada pela Visão Geral do Dashboard Woke.
 
 ### Problema identificado
 
-A tela Vis�o Geral exibia dados de ROAS e custo apenas at� `2026-05-07`, enquanto as tabelas base de Google Ads j� estavam atualizadas at� `2026-05-09`.
+A tela Visão Geral exibia dados de ROAS e custo apenas até `2026-05-07`, enquanto as tabelas base de Google Ads já estavam atualizadas até `2026-05-09`.
 
-Valida��o inicial:
+Validação inicial:
 
 - `kpi_cache_daily.max(date) = 2026-05-07`
 - `campaign_summary.max(date_range_end) = 2026-05-09`
 - `keyword_analysis.max(date_range_end) = 2026-05-09`
 
-Os registros de `sync_runs` confirmavam execu��es recentes com sucesso para:
+Os registros de `sync_runs` confirmavam execuções recentes com sucesso para:
 
 - `google_ads / campaign_summary`
 - `google_ads / keyword_analysis`
 
-Mas n�o havia execu��o recente para:
+Mas não havia execução recente para:
 
 - `google_ads / kpi_cache_daily`
 
 ### Causa
 
-O pipeline de Google Ads atualizava `campaign_summary` e `keyword_analysis`, mas n�o recalculava `kpi_cache_daily`.
+O pipeline de Google Ads atualizava `campaign_summary` e `keyword_analysis`, mas não recalculava `kpi_cache_daily`.
 
-Como a Vis�o Geral depende de `kpi_cache_daily`, o gr�fico de custo, convers�es e ROAS ficava defasado mesmo com os dados base atualizados.
+Como a Visão Geral depende de `kpi_cache_daily`, o gráfico de custo, conversões e ROAS ficava defasado mesmo com os dados base atualizados.
 
-### Corre��o realizada
+### Correção realizada
 
-Foi adicionada a fun��o `sync_kpi_cache_daily()` em `backend/connectors/sync_ads.py`.
+Foi adicionada a função `sync_kpi_cache_daily()` em `backend/connectors/sync_ads.py`.
 
-A fun��o consulta a tabela di�ria de Google Ads no BigQuery:
+A função consulta a tabela diária de Google Ads no BigQuery:
 
 `p_ads_CampaignStats_6627867790`
 
-E gera tr�s m�tricas por dia:
+E gera três métricas por dia:
 
 - `total_cost`
 - `conversions`
 - `roas`
 
-A atualiza��o � feita via upsert em `public.kpi_cache_daily`, usando o conflito:
+A atualização é feita via upsert em `public.kpi_cache_daily`, usando o conflito:
 
 `workspace_id,date,metric_name,channel`
 
-Tamb�m foi adicionado um bloco em `backend/connectors/a_data_sync.py` para executar `sync_kpi_cache_daily()` entre `sync_campaigns()` e `sync_keywords()`, com registro pr�prio em `sync_runs`:
+Também foi adicionado um bloco em `backend/connectors/a_data_sync.py` para executar `sync_kpi_cache_daily()` entre `sync_campaigns()` e `sync_keywords()`, com registro próprio em `sync_runs`:
 
 - `source_platform = google_ads`
 - `data_source = kpi_cache_daily`
 
-### Valida��o
+### Validação
 
 Dry-run executado com sucesso:
 
-- Per�odo: `2026-04-10..2026-05-09`
+- Período: `2026-04-10..2026-05-09`
 - 29 dias retornados do BigQuery
 - 87 registros previstos
-- 29 dias � 3 m�tricas
+- 29 dias × 3 métricas
 
-Execu��o real executada com sucesso:
+Execução real executada com sucesso:
 
 - `sync_kpi_cache_daily` retornou 29 dias
 - 87 registros foram upsertados
@@ -1199,28 +1199,28 @@ Execu��o real executada com sucesso:
 - `rows_loaded = 87`
 - `error_message = null`
 
-Valida��o final:
+Validação final:
 
 - `kpi_cache_daily.max(date) = 2026-05-08`
 - `kpi_cache_daily.max(updated_at) = 2026-05-09 15:54 UTC`
 - `campaign_summary.max(date_range_end) = 2026-05-09`
 - `keyword_analysis.max(date_range_end) = 2026-05-09`
 
-A data m�xima de `kpi_cache_daily` ficou em `2026-05-08` porque a query usa `HAVING cost > 0`, excluindo dias sem custo.
+A data máxima de `kpi_cache_daily` ficou em `2026-05-08` porque a query usa `HAVING cost > 0`, excluindo dias sem custo.
 
-### Observa��es
+### Observações
 
-A execu��o real gerou duas entradas de `sync_runs` para `kpi_cache_daily`, ambas com sucesso e `rows_loaded = 87`. Como o upsert � idempotente, isso n�o gerou duplicidade em `kpi_cache_daily`.
+A execução real gerou duas entradas de `sync_runs` para `kpi_cache_daily`, ambas com sucesso e `rows_loaded = 87`. Como o upsert é idempotente, isso não gerou duplicidade em `kpi_cache_daily`.
 
 O ROAS passou a ser calculado como:
 
 `metrics_conversions_value / total_cost`
 
-Isso reflete a configura��o atual de valor de convers�o no Google Ads. Caso o cliente espere ROAS financeiro, ser� necess�rio validar a qualidade do `metrics_conversions_value` como d�vida futura de mensura��o.
+Isso reflete a configuração atual de valor de conversão no Google Ads. Caso o cliente espere ROAS financeiro, será necessário validar a qualidade do `metrics_conversions_value` como dívida futura de mensuração.
 
-### Commit t�cnico
+### Commit técnico
 
-Implementa��o publicada na `main`:
+Implementação publicada na `main`:
 
 `8d2bb25 feat: refresh kpi cache daily in google ads sync`
 
