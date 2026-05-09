@@ -149,7 +149,7 @@ export async function getGrowthFunnel(
   filters: ApiQueryFilters,
 ): Promise<GrowthFunnelResponse> {
   const { summaries, warnings } = await readGa4Summaries(workspaceId, filters);
-  const events = summaries.flatMap(summaryToFunnelEvents);
+  const events = aggregateFunnelEvents(summaries.flatMap(summaryToFunnelEvents));
 
   return makeEnvelope({
     workspaceId,
@@ -175,14 +175,12 @@ export async function getGrowthEvents(
   filters: ApiQueryFilters,
 ): Promise<GrowthEventsResponse> {
   const { summaries, warnings } = await readGa4Summaries(workspaceId, filters);
-  const events = summaries.flatMap((summary) => {
-    const totalEvents = summary.total_events || 0;
-    return summaryToFunnelEvents(summary).map((event) => ({
-      ...event,
-      share_of_events: totalEvents > 0 ? Number((event.event_count / totalEvents).toFixed(4)) : null,
-    }));
-  });
-  const landingPages = summaries.flatMap((summary) => summary.top_landing_pages);
+  const totalEvents = sum(summaries, "total_events");
+  const events = aggregateFunnelEvents(summaries.flatMap(summaryToFunnelEvents)).map((event) => ({
+    ...event,
+    share_of_events: totalEvents > 0 ? Number((event.event_count / totalEvents).toFixed(4)) : null,
+  }));
+  const landingPages = aggregateLandingPages(summaries.flatMap((s) => s.top_landing_pages));
 
   return makeEnvelope({
     workspaceId,
@@ -369,6 +367,27 @@ function mapPaidSessionsQuality(row: RawRow): PaidSessionsQualityContract {
     date_range_end: stringValue(row.date_range_end),
     checked_at: stringValue(row.checked_at) ?? "",
   };
+}
+
+function aggregateFunnelEvents(events: GrowthFunnelEvent[]): GrowthFunnelEvent[] {
+  const map = new Map<string, GrowthFunnelEvent>();
+  for (const ev of events) {
+    const existing = map.get(ev.event_name);
+    if (existing) {
+      map.set(ev.event_name, { ...existing, event_count: existing.event_count + ev.event_count });
+    } else {
+      map.set(ev.event_name, { ...ev });
+    }
+  }
+  return [...map.values()];
+}
+
+function aggregateLandingPages(pages: GrowthLandingPage[]): GrowthLandingPage[] {
+  const map = new Map<string, number>();
+  for (const page of pages) {
+    map.set(page.page_location, (map.get(page.page_location) ?? 0) + page.views);
+  }
+  return [...map.entries()].map(([page_location, views]) => ({ page_location, views }));
 }
 
 function summaryToFunnelEvents(summary: Ga4FirstLightSummary): GrowthFunnelEvent[] {

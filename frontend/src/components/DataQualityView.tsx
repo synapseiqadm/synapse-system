@@ -52,30 +52,7 @@ function scoreLabel(score: number): { label: string; color: string; ring: string
   return              { label: "Crítico",  color: "text-red-400",     ring: "border-red-500/50",     text: "text-red-300"     };
 }
 
-function getHealthExplanation(checks: DataQualityReport[]): string {
-  const hasFailedCriticalOrHigh = checks.some(
-    (c) => c.status === "failed" && (c.severity === "critical" || c.severity === "high"),
-  );
-  if (hasFailedCriticalOrHigh) return "Há falhas críticas que precisam ser corrigidas antes da análise.";
 
-  const hasFailed = checks.some((c) => c.status === "failed");
-  if (hasFailed) return "Há falhas de qualidade que podem comprometer a análise.";
-
-  const hasZeroConversionsWarning = checks.some(
-    (c) => c.status === "warning" && c.check_name.includes("zero_conversions"),
-  );
-  if (hasZeroConversionsWarning) return "Existem campanhas ou keywords com custo sem conversão.";
-
-  const hasMockWarning = checks.some(
-    (c) => c.status === "warning" && c.check_name === "mock_data_presence",
-  );
-  if (hasMockWarning) return "Há dados de teste presentes no ambiente.";
-
-  if (checks.length > 0 && checks.every((c) => c.status === "passed"))
-    return "Os dados estão atualizados e prontos para análise.";
-
-  return "Revise os checks abaixo para entender a saúde dos dados.";
-}
 
 // ─── Grouping / sorting ────────────────────────────────────────────────────────
 
@@ -260,9 +237,8 @@ export function DataQualityView() {
 
   const latest = useMemo(() => getLatestChecksByName(checks), [checks]);
 
-  const score       = useMemo(() => calculateDataHealthScore(latest), [latest]);
-  const scoreMeta   = useMemo(() => scoreLabel(score), [score]);
-  const explanation = useMemo(() => getHealthExplanation(latest), [latest]);
+  const score     = useMemo(() => calculateDataHealthScore(latest), [latest]);
+  const scoreMeta = useMemo(() => scoreLabel(score), [score]);
 
   const passed   = latest.filter((c) => c.status === "passed").length;
   const warnings = latest.filter((c) => c.status === "warning").length;
@@ -353,84 +329,90 @@ export function DataQualityView() {
       </div>
 
       {/* ── Summary cards ────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 xl:grid-cols-3 gap-4 mb-2">
 
         {/* Score card */}
         <div className={`bg-[#0f1117] border rounded-xl p-5 ${scoreMeta.ring}`}>
           <div className="flex items-center justify-between mb-3">
             <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">
-              Saúde dos Dados
+              Score de Saúde dos Dados
             </p>
             <div className="w-7 h-7 rounded-lg bg-indigo-600/10 border border-indigo-500/15 flex items-center justify-center">
               <ShieldCheck size={13} className="text-indigo-400" />
             </div>
           </div>
-          <p className={`text-3xl font-bold mb-0.5 ${scoreMeta.color}`}>{score}</p>
-          <p className={`text-[11px] font-semibold ${scoreMeta.text}`}>{scoreMeta.label}</p>
-          <p className="text-[11px] text-zinc-500 mt-2 leading-snug">{explanation}</p>
+          <div className="flex items-baseline gap-1 mb-0.5">
+            <p className={`text-3xl font-bold ${scoreMeta.color}`}>{score}</p>
+            <span className="text-sm font-medium text-zinc-600">/100</span>
+          </div>
+          <p className="text-[11px] text-zinc-600 mb-1.5">
+            Classificação:{" "}
+            <span className={`font-semibold ${scoreMeta.text}`}>{scoreMeta.label}</span>
+          </p>
+          <p className="text-[11px] text-zinc-500 leading-snug">
+            Classificação geral calculada a partir dos checks do período.
+          </p>
         </div>
 
-        {/* Passed */}
+        {/* Checks Analisados */}
+        <div className="bg-[#0f1117] border border-zinc-800/60 rounded-xl p-5">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Checks Analisados</p>
+            <Database size={14} className="text-zinc-600" />
+          </div>
+          <p className="text-3xl font-bold text-white">{latest.length}</p>
+          <p className="text-[11px] text-zinc-600 mt-0.5">{checks.length} execuções históricas</p>
+        </div>
+
+        {/* Passou */}
         <div className="bg-[#0f1117] border border-zinc-800/60 rounded-xl p-5">
           <div className="flex items-center justify-between mb-3">
             <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Passou</p>
             <CheckCircle2 size={14} className="text-emerald-500/60" />
           </div>
           <p className="text-3xl font-bold text-white">{passed}</p>
-          <p className="text-[11px] text-zinc-600 mt-0.5">{latest.length} checks no total</p>
+          <p className="text-[11px] text-zinc-600 mt-0.5">de {latest.length} checks</p>
         </div>
 
-        {/* Warnings + failures — clearer two-line layout */}
-        <div className="bg-[#0f1117] border border-zinc-800/60 rounded-xl p-5">
+        {/* Avisos */}
+        <div className={`bg-[#0f1117] border rounded-xl p-5 ${warnings > 0 ? "border-amber-500/20" : "border-zinc-800/60"}`}>
           <div className="flex items-center justify-between mb-3">
-            <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">
-              Avisos / Falhas
-            </p>
-            <ShieldAlert size={14} className="text-amber-500/60" />
+            <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Avisos</p>
+            <AlertTriangle size={14} className={warnings > 0 ? "text-amber-500/60" : "text-zinc-600"} />
           </div>
-          <div className="space-y-1">
-            <div className="flex items-baseline gap-1.5">
-              <p className="text-2xl font-bold text-amber-400 tabular-nums">{warnings}</p>
-              <p className="text-xs text-amber-600 font-medium">
-                aviso{warnings !== 1 ? "s" : ""}
-              </p>
-            </div>
-            <div className="flex items-baseline gap-1.5">
-              <p className="text-2xl font-bold text-red-400 tabular-nums">{failed}</p>
-              <p className="text-xs text-red-600 font-medium">
-                falha{failed !== 1 ? "s" : ""}
-              </p>
-            </div>
-          </div>
-          {critical > 0 && (
-            <p className="text-[11px] text-red-500 mt-1.5 font-semibold">
-              {critical} crítico{critical > 1 ? "s" : ""}
-            </p>
-          )}
+          <p className={`text-3xl font-bold ${warnings > 0 ? "text-amber-400" : "text-white"}`}>{warnings}</p>
+          <p className="text-[11px] text-zinc-600 mt-0.5">checks com status warning</p>
         </div>
 
-        {/* Last update */}
-        <div className="bg-[#0f1117] border border-zinc-800/60 rounded-xl p-5">
+        {/* Falhas */}
+        <div className={`bg-[#0f1117] border rounded-xl p-5 ${failed > 0 ? "border-red-500/20" : "border-zinc-800/60"}`}>
           <div className="flex items-center justify-between mb-3">
-            <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">
-              Última Verificação
-            </p>
-            <Clock size={14} className="text-zinc-600" />
+            <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Falhas</p>
+            <XCircle size={14} className={failed > 0 ? "text-red-500/60" : "text-zinc-600"} />
           </div>
-          {lastCheckedAt ? (
-            <>
-              <p className="text-sm font-semibold text-white leading-snug">
-                {formatCheckedAt(lastCheckedAt)}
-              </p>
-              <p className="text-[11px] text-zinc-600 mt-0.5 font-mono">
-                {checks.length} registros históricos
-              </p>
-            </>
-          ) : (
-            <p className="text-sm text-zinc-700">—</p>
-          )}
+          <p className={`text-3xl font-bold ${failed > 0 ? "text-red-400" : "text-white"}`}>{failed}</p>
+          <p className="text-[11px] text-zinc-600 mt-0.5">checks com status failed</p>
+        </div>
+
+        {/* Severidade Crítica */}
+        <div className={`bg-[#0f1117] border rounded-xl p-5 ${critical > 0 ? "border-red-500/20" : "border-zinc-800/60"}`}>
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Sev. Crítica</p>
+            <ShieldAlert size={14} className={critical > 0 ? "text-red-500/60" : "text-zinc-600"} />
+          </div>
+          <p className={`text-3xl font-bold ${critical > 0 ? "text-red-400" : "text-zinc-600"}`}>{critical}</p>
+          <p className="text-[11px] text-zinc-600 mt-0.5">checks com severity=critical</p>
         </div>
       </div>
+
+      {/* Última verificação */}
+      {lastCheckedAt && (
+        <div className="flex items-center gap-1.5 mb-6 text-[11px] text-zinc-700 font-mono">
+          <Clock size={10} className="flex-shrink-0" />
+          <span>Última verificação: {formatCheckedAt(lastCheckedAt)}</span>
+        </div>
+      )}
+      {!lastCheckedAt && <div className="mb-6" />}
 
       {/* ── Checks table ─────────────────────────────────────────────────────── */}
       <div className="bg-[#0d0d10] border border-zinc-800/60 rounded-xl overflow-hidden">
@@ -484,8 +466,19 @@ export function DataQualityView() {
 
         {/* Table */}
         {filtered.length === 0 ? (
-          <div className="flex items-center justify-center h-24 text-zinc-700 text-sm">
-            Nenhum check encontrado para esse filtro.
+          <div className="flex flex-col items-center justify-center gap-2 py-8 px-6 text-center">
+            <p className="text-sm text-zinc-700">
+              {filter === "critical"
+                ? "Nenhum check com severidade crítica encontrado."
+                : "Nenhum check encontrado para esse filtro."}
+            </p>
+            {filter === "critical" && (
+              <p className="text-[11px] text-zinc-700 max-w-sm leading-relaxed">
+                O status{" "}
+                <span className={`font-semibold ${scoreMeta.text}`}>{scoreMeta.label}</span>{" "}
+                no card de saúde refere-se à classificação do score geral (0–100), não à quantidade de checks com severity=critical.
+              </p>
+            )}
           </div>
         ) : (
           <div className="overflow-x-auto">
