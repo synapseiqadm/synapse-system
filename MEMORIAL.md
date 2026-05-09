@@ -1107,3 +1107,38 @@ Agora eu registraria duas prÃ³ximas frentes:
 
 Reconciliar histÃ³rico de migrations do Supabase, porque o remoto estÃ¡ com migrations timestamp que nÃ£o existem localmente.
 v1.4 Insights determinÃ­sticos no frontend, para transformar esses sinais em leitura executiva mais clara dentro da prÃ³pria tela.
+## Supabase migration reconciliation bloqueada por baseline incompleto
+
+Em 2026-05-09, foi iniciada a fase de reconciliação do histórico de migrations Supabase para o projeto `lasocsneburvtxqgqhie`.
+
+A fase confirmou que o commit `fix: clarify data quality health score semantics` estava presente e que a working tree estava limpa.
+
+Foram salvos em `supabase/.temp/migration-reconciliation/`:
+
+- versão do Supabase CLI
+- migration list antes da reconciliação
+- dry-run antes da reconciliação
+- dump remoto do schema
+- tentativa de db diff
+- auditoria de tabelas remotas versus migrations locais
+
+O `db diff --linked --schema public` falhou ao aplicar `002_metadata_and_constraints.sql` em uma shadow database, porque `campaign_summary` não é criada pelas migrations locais.
+
+A auditoria identificou tabelas existentes no remoto, mas não criadas localmente:
+
+- agent_action_logs
+- ai_playbooks
+- campaign_summary
+- data_connectors
+- keyword_analysis
+- kpi_cache_daily
+- profiles
+- workspaces
+
+Decisão:
+
+Não executar `supabase migration repair` nesta fase, pois as migrations locais `001` a `007` não representam um baseline completo do schema remoto.
+
+Próxima etapa recomendada:
+
+`v1.3.2 Supabase Baseline Recovery`, com objetivo de recuperar ou reconstruir uma migration baseline mínima antes de retomar a reconciliação do histórico.
