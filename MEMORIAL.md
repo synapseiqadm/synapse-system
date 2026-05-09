@@ -1142,3 +1142,60 @@ Não executar `supabase migration repair` nesta fase, pois as migrations locais `
 Próxima etapa recomendada:
 
 `v1.3.2 Supabase Baseline Recovery`, com objetivo de recuperar ou reconstruir uma migration baseline mínima antes de retomar a reconciliação do histórico.
+
+## Supabase migration history reconciliation concluída
+
+Em 2026-05-09, a reconciliação do histórico de migrations Supabase foi concluída para o projeto `lasocsneburvtxqgqhie`.
+
+Contexto:
+
+A fase anterior identificou que o remoto possuía timestamps antigos em `supabase_migrations.schema_migrations`, enquanto o repositório local possuía migrations numeradas.
+
+Após auditoria, foi constatado que as migrations locais não reconstruíam o schema público completo, pois dependiam de um baseline pré existente.
+
+Correções locais realizadas:
+
+- Criada `supabase/migrations/000_remote_baseline_public_schema.sql`
+- Criada `supabase/migrations/008_align_sync_runs_rls.sql`
+- Validado `npx supabase db diff --linked --schema public`
+- Resultado: `No schema changes found`
+
+Reconciliação de histórico:
+
+Os timestamps remotos antigos foram marcados como `reverted`:
+
+- 20260507220207
+- 20260507220927
+- 20260507222710
+- 20260507222844
+- 20260507232815
+- 20260507235710
+- 20260508001607
+- 20260508115300
+- 20260508141506
+
+As migrations locais foram marcadas como `applied`:
+
+- 000
+- 001
+- 002
+- 003
+- 004
+- 005
+- 006
+- 007
+- 008
+
+Validação final:
+
+`npx supabase migration list --linked` passou a mostrar alinhamento entre Local e Remote para `000` a `008`.
+
+`npx supabase db push --linked --dry-run` retornou:
+
+`Remote database is up to date.`
+
+Decisão:
+
+Não foi executado `db push` real.
+
+A reconciliação alterou apenas o histórico remoto de migrations via `supabase migration repair`, após o schema público reconstruído localmente ter sido validado contra o remoto.
