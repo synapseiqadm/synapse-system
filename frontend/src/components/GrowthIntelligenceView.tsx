@@ -6,6 +6,7 @@ import {
   Database, Building2, CalendarDays, TrendingUp, Zap, Eye,
 } from "lucide-react";
 import { DEFAULT_WORKSPACE } from "@/lib/workspace";
+import { getCheckLabel, isReviewRequired } from "@/lib/semanticRegistry";
 import type {
   GrowthOverviewResponse,
   GrowthFunnelResponse,
@@ -48,18 +49,6 @@ const FUNNEL_STEP_LABELS: Record<string, string> = {
   conversion:  "Conversão",
 };
 
-const FINDING_NAMES: Record<string, string> = {
-  ga4_ads_overlap_insufficient:                    "Sobreposição GA4–Ads Insuficiente",
-  ga4_conversion_registry_mismatch:                "Eventos de Conversão Não Registrados",
-  ads_conversion_action_not_in_registry:           "Ação de Conversão Fora do Registro",
-  ads_conversion_action_semantic_review_required:  "Ação de Conversão em Revisão Semântica",
-  ga4_non_production_traffic_detected:             "Tráfego Não-Produção Detectado",
-  ga4_suspicious_event_names_detected:             "Nomes de Eventos Suspeitos",
-  paid_sessions_without_funnel_progress:           "Sessões Pagas sem Avanço no Funil",
-  utm_campaign_empty_in_paid_urls:                 "UTM Campaign Ausente em URLs Pagas",
-};
-
-const REVIEW_REQUIRED_CHECKS = new Set(["ads_conversion_action_semantic_review_required"]);
 
 const SEVERITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
 const STATUS_ORDER:   Record<string, number>  = { failed: 0, warning: 1, passed: 2 };
@@ -508,7 +497,7 @@ function PaidSessionsSection({ state, env }: { state: ApiState<PaidSessionsQuali
               {/* Header */}
               <div className="flex items-start justify-between gap-3 mb-3">
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-zinc-200">{FINDING_NAMES[check.check_name] ?? check.check_name}</p>
+                  <p className="text-sm font-medium text-zinc-200">{getCheckLabel(check.check_name)}</p>
                   <p className="text-[10px] text-zinc-600 font-mono mt-0.5">{check.check_name}</p>
                 </div>
                 <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">
@@ -769,8 +758,8 @@ function FindingsSection({ state, govSummary, env }: {
           const isDetailOpen = openKey    === key;
           const isHistOpen   = historyKey === key;
           const hasDetails   = f.details != null;
-          const isReviewReqd = REVIEW_REQUIRED_CHECKS.has(f.check_name);
-          const displayName  = FINDING_NAMES[f.check_name] ?? f.check_name;
+          const isReviewReqd = isReviewRequired(f.check_name);
+          const displayName  = getCheckLabel(f.check_name);
           const count        = all.length;
 
           return (
