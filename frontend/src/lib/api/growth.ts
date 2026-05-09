@@ -1,4 +1,5 @@
 import { createClient } from "@/utils/supabase/server";
+import { getConfiguredFunnelStep } from "@/lib/measurementConfig";
 import type {
   ApiQueryFilters,
   CampaignSummaryContract,
@@ -406,8 +407,10 @@ function summaryToFunnelEvents(summary: Ga4FirstLightSummary): GrowthFunnelEvent
 }
 
 function classifyFunnelStep(eventName: string, isConversion: boolean): GrowthFunnelEvent["step"] {
-  const name = eventName.toLowerCase();
   if (isConversion) return "conversion";
+  const configured = getConfiguredFunnelStep(eventName);
+  if (configured) return configured;
+  const name = eventName.toLowerCase();
   if (name === "session_start" || name === "first_visit") return "acquisition";
   if (name === "page_view") return "landing";
   if (/(lead|signup|sign_up|submit|criar|premium|purchase|checkout|conversion)/.test(name)) {

@@ -1097,3 +1097,30 @@ A v1.3.1 é exclusivamente documental e preparatória. Nenhum módulo do pipelin
 - **Checks com `requires_client_validation: true`** devem sempre escalar para revisão humana antes de qualquer ação automatizada ou recomendação de agente.
 - **v1.5 AI Growth Analyst Agent:** o agente só pode gerar recomendações para checks com `can_generate_insight: true`. Checks com `requires_client_validation: true` devem sempre escalar para revisão humana antes de qualquer ação.
 - **Futuros checks (T, U, …):** devem ser adicionados ao `semantic_registry.yml` **e** ao espelho `semanticRegistry.ts` antes de serem implementados no pipeline.
+
+---
+
+## 14. v1.4.1 — Measurement Config Bridge
+
+**Data:** Maio 2026  
+**Objetivo:** Introduzir o espelho TypeScript da `conversion_registry` do YAML do tenant, eliminando a dependência do regex puro em `classifyFunnelStep()` para eventos com classificação canônica definida.
+
+### 14.1 O que foi entregue
+
+- `frontend/src/lib/measurementConfig.ts` — espelho estático da seção `conversion_registry` de `woke_measurement_config.yml`. Expõe `EVENT_FUNNEL_MAP` (4 entradas) e `getConfiguredFunnelStep()`.
+- `frontend/src/lib/api/growth.ts` — `classifyFunnelStep()` atualizado: prioridade `isConversion` → lookup no mapa → fallback regex.
+
+### 14.2 Dívida Técnica: Divergência entre `GA4_CONVERSION_EVENTS` e `canonical_events`
+
+**Problema identificado:** As listas de eventos de conversão no backend são completamente diferentes e desconexas:
+
+| Fonte | Eventos listados |
+|---|---|
+| `backend/connectors/sync_ga4.py` → `GA4_CONVERSION_EVENTS` | `generate_lead`, `app_criar_conta`, `mentor_signup_with_auto_signin`, `quero_ser_premium`, `sign_up`, `form_submit` |
+| `woke_measurement_config.yml` → `canonical_events` | `Mentor_signup_success`, `USER_SIGNUP_MENTOR_WITH_AUTO_SIGNIN` |
+
+As convenções de nomenclatura são incompatíveis (snake_case vs CamelCase/SCREAMING_SNAKE), os eventos não coincidem, e o **Check K** (`ga4_conversion_events_present`) usa `GA4_CONVERSION_EVENTS` como lista "esperada" — uma lista que não foi validada contra os eventos que realmente disparam no GA4 do cliente.
+
+**Impacto:** O Check K pode reportar falsos negativos (eventos esperados ausentes) ou falsos positivos se a lista não refletir a implementação GA4 real do cliente. O `EVENT_FUNNEL_MAP` no frontend (`measurementConfig.ts`) deriva do YAML, não de `sync_ga4.py`, criando uma terceira fonte de verdade para eventos de conversão.
+
+**Resolução pendente:** Requer confirmação do cliente sobre quais eventos realmente disparam no GA4. Uma vez confirmados, `GA4_CONVERSION_EVENTS` em `sync_ga4.py` deve ser alinhado com `canonical_events` no YAML (ou vice-versa), e o espelho `measurementConfig.ts` deve ser atualizado. Não alterar sem validação do cliente.
