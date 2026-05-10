@@ -1,6 +1,8 @@
 name: Sync BigQuery → Supabase
 
 on:
+  schedule:
+    - cron: "0 9 * * *"  # 06:00 BRT
   workflow_dispatch:
     inputs:
       dry_run:

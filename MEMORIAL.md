@@ -1233,19 +1233,48 @@ Implementação publicada na `main`:
 
 ### Objetivo
 
-Remover a dependencia de execucao local do pipeline `a_data_sync.py`, adicionando um workflow GitHub Actions para trigger manual com opcao de dry-run e protecao contra execucoes simultaneas.
+Remover a dependência de execução local do pipeline `a_data_sync.py`, automatizando via GitHub Actions com trigger manual (dry-run seguro) e agendamento diário.
 
 ### O que foi entregue
 
-Edicao de `.github/workflows/sync_data.yml`:
+Edição de `.github/workflows/sync_data.yml`:
 
-- `workflow_dispatch` com input `dry_run` (boolean, default `true`) -- permite teste seguro pelo GitHub UI sem risco de escrita em producao
-- `concurrency: group: a-data-sync-woke, cancel-in-progress: false` -- segundo trigger aguarda fila em vez de cancelar run em andamento
-- Credenciais GCP via `printenv GOOGLE_CREDS > /tmp/gcp_credentials.json` em vez de `echo ${{ secret }}` -- evita quebra por aspas simples no JSON e exposicao em mensagens de erro
-- `ENABLE_INSIGHTS: "true"` adicionado explicitamente
-- `schedule` removido desta entrega -- re-adicionar apos validacao do dry-run em CI
+- `schedule: cron: "0 9 * * *"` — execução diária às 06:00 BRT
+- `workflow_dispatch` com input `dry_run` (boolean, default `true`) — permite teste seguro pelo GitHub UI sem risco de escrita em produção
+- `concurrency: group: a-data-sync-woke, cancel-in-progress: false` — segundo trigger aguarda fila em vez de cancelar run em andamento
+- Credenciais GCP via base64: secret armazena `base64(credentials.json)`, runner decodifica com `base64 --decode` — evita corrupção de JSON por caracteres especiais
+- `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true` — silencia warning de deprecação de Node.js 20
 
-### Pendencias abertas
+### Validação realizada
 
-- `GA4_DATASET` permanece `""` em CI. Para ativar GA4 + checks L-S + insights GA4 no pipeline agendado, confirmar que a service account tem acesso ao dataset `analytics_289891960` e mudar o valor no workflow.
-- Apos dry-run validado pelo GitHub UI, re-adicionar cron `"0 9 * * *"` (06:00 BRT) ao workflow.
+**Dry-run (GitHub Actions, `dry_run=true`):**
+
+- `[a_data_sync] env=production dry_run=True period=2026-04-11..2026-05-10`
+- `[sync_campaigns] --dry-run: would upsert 9 records`
+- `[sync_kpi_cache_daily] --dry-run: 29 days × 3 metrics = 87 records would be upserted`
+- `[sync_keywords] --dry-run: would upsert 129 records`
+- `[data_quality] --dry-run: would insert 15 quality checks`
+- `[semantic_governance] --dry-run: would write 8 findings`
+- `[insights] --dry-run: would upsert 4 insights`
+
+**Execução real (GitHub Actions, `dry_run=false`):**
+
+`sync_runs` confirmou sucesso para os três data sources:
+
+- `google_ads / campaign_summary / success / rows_loaded = 9`
+- `google_ads / kpi_cache_daily / success / rows_loaded = 87`
+- `google_ads / keyword_analysis / success / rows_loaded = 129`
+
+Validação em Supabase:
+
+- `campaign_summary.max(date_range_end) = 2026-05-10`
+- `keyword_analysis.max(date_range_end) = 2026-05-10`
+- `kpi_cache_daily.max(date) = 2026-05-09` — fica em 09/05 porque `HAVING cost > 0` exclui dias sem custo
+
+### Comportamento do scheduled run
+
+Quando disparado pelo `schedule`, `inputs.dry_run` não existe (inputs só estão disponíveis para `workflow_dispatch`). A condição `"${{ inputs.dry_run }}" = "true"` avalia como falso, então o cron executa sempre sem `--dry-run` — comportamento correto para produção.
+
+### Pendência aberta
+
+`GA4_DATASET` permanece `""` em CI. Para ativar GA4 + checks L–S + insights GA4 no pipeline agendado, confirmar que a service account tem acesso ao dataset `analytics_289891960` e atualizar o valor no workflow.
