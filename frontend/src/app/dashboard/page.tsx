@@ -5,10 +5,12 @@ import {
   Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
 import { createClient } from "@/utils/supabase/client";
+import Link from "next/link";
 import {
   LayoutGrid, Radio, Settings, TrendingUp, TrendingDown,
   DollarSign, Repeat2, Loader2, AlertCircle, CalendarDays,
   Search, Tag, Megaphone, Hash, ChevronRight, ShieldCheck, Lightbulb, Building2, Activity,
+  Database,
 } from "lucide-react";
 import { GrowthIntelligenceView } from "@/components/GrowthIntelligenceView";
 import { DataQualityView } from "@/components/DataQualityView";
@@ -379,6 +381,28 @@ function GeralView({
             </LineChart>
           </ResponsiveContainer>
         )}
+      </div>
+
+      {/* Sync status shortcut */}
+      <div className="mt-4 bg-[#0f1117] border border-zinc-800/60 rounded-xl p-4 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-8 h-8 rounded-lg bg-indigo-600/10 border border-indigo-500/15 flex items-center justify-center flex-shrink-0">
+            <Database size={14} className="text-indigo-400" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-zinc-200">Sincronização dos dados</p>
+            <p className="text-[11px] text-zinc-500 mt-0.5">
+              Veja a última execução, fontes sincronizadas e falhas recentes.
+            </p>
+          </div>
+        </div>
+        <Link
+          href="/logs"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold text-indigo-300 bg-indigo-600/10 border border-indigo-500/20 hover:bg-indigo-600/20 transition-colors whitespace-nowrap flex-shrink-0"
+        >
+          Ver logs
+          <ChevronRight size={12} />
+        </Link>
       </div>
     </>
   );

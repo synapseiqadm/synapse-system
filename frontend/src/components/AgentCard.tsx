@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { Bot, Zap, AlertTriangle, ShieldCheck, ChevronRight, Clock, Activity } from "lucide-react";
 
-export type AgentStatus = "autonomous" | "alert" | "suggestion" | "paused";
+export type AgentStatus = "autonomous" | "alert" | "suggestion" | "paused" | "preview";
 export type AgentMode   = "auto" | "manual";
 
 export interface Agent {
@@ -53,6 +53,13 @@ const STATUS_CFG: Record<AgentStatus, {
     badge: "bg-slate-700/40 text-slate-500 border-slate-700/40",
     glow:  "",
     border:"border-[#1a2540]",
+  },
+  preview: {
+    label: "Preview",
+    dot:   "bg-indigo-400/50",
+    badge: "bg-indigo-500/10 text-indigo-300/70 border-indigo-500/15",
+    glow:  "",
+    border:"border-zinc-700/50",
   },
 };
 
@@ -123,47 +130,50 @@ export function AgentCard({ agent, onSelect, selected }: AgentCardProps) {
         ))}
       </div>
 
-      {/* Stats row */}
-      <div className="flex items-center gap-4 mb-4 pb-4 border-b border-[#1a2540]">
-        <div className="flex items-center gap-1.5">
-          <Activity size={11} className="text-slate-600" />
-          <span className="text-[11px] text-slate-500">
-            <span className="text-slate-300 font-semibold">{agent.actionsToday}</span> ações hoje
-          </span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <ShieldCheck size={11} className="text-slate-600" />
-          <span className="text-[11px] text-slate-500">
-            <span className="text-emerald-400 font-semibold">{agent.successRate}%</span> sucesso
-          </span>
-        </div>
-      </div>
-
-      {/* Footer: mode toggle + last action */}
-      <div className="flex items-center justify-between">
-        {/* Manual / Auto toggle */}
-        <div
-          onClick={(e) => { e.stopPropagation(); setMode(m => m === "auto" ? "manual" : "auto"); }}
-          className="flex items-center gap-2 cursor-pointer group"
-        >
-          <div className={`relative w-9 h-5 rounded-full transition-colors duration-200 flex-shrink-0
-            ${mode === "auto" ? "bg-violet-600" : "bg-slate-700"}
-          `}>
-            <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all duration-200
-              ${mode === "auto" ? "left-[18px]" : "left-0.5"}
-            `} />
+      {/* Stats row — hidden in preview mode */}
+      {agent.status !== "preview" && (
+        <div className="flex items-center gap-4 mb-4 pb-4 border-b border-[#1a2540]">
+          <div className="flex items-center gap-1.5">
+            <Activity size={11} className="text-slate-600" />
+            <span className="text-[11px] text-slate-500">
+              <span className="text-slate-300 font-semibold">{agent.actionsToday}</span> ações hoje
+            </span>
           </div>
-          <span className={`text-[11px] font-semibold transition-colors ${mode === "auto" ? "text-violet-300" : "text-slate-500"}`}>
-            {mode === "auto" ? "Automático" : "Manual"}
-          </span>
+          <div className="flex items-center gap-1.5">
+            <ShieldCheck size={11} className="text-slate-600" />
+            <span className="text-[11px] text-slate-500">
+              <span className="text-emerald-400 font-semibold">{agent.successRate}%</span> sucesso
+            </span>
+          </div>
         </div>
+      )}
 
-        <div className="flex items-center gap-1.5">
-          <Clock size={10} className="text-slate-700" />
-          <span className="text-[10px] text-slate-600">{agent.lastAction}</span>
-          <ChevronRight size={12} className="text-slate-700 group-hover:text-slate-400 transition-colors" />
+      {/* Footer: mode toggle + last action — hidden in preview mode */}
+      {agent.status !== "preview" && (
+        <div className="flex items-center justify-between">
+          <div
+            onClick={(e) => { e.stopPropagation(); setMode(m => m === "auto" ? "manual" : "auto"); }}
+            className="flex items-center gap-2 cursor-pointer group"
+          >
+            <div className={`relative w-9 h-5 rounded-full transition-colors duration-200 flex-shrink-0
+              ${mode === "auto" ? "bg-violet-600" : "bg-slate-700"}
+            `}>
+              <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all duration-200
+                ${mode === "auto" ? "left-[18px]" : "left-0.5"}
+              `} />
+            </div>
+            <span className={`text-[11px] font-semibold transition-colors ${mode === "auto" ? "text-violet-300" : "text-slate-500"}`}>
+              {mode === "auto" ? "Automático" : "Manual"}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <Clock size={10} className="text-slate-700" />
+            <span className="text-[10px] text-slate-600">{agent.lastAction}</span>
+            <ChevronRight size={12} className="text-slate-700 group-hover:text-slate-400 transition-colors" />
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

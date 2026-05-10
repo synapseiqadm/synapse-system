@@ -14,9 +14,9 @@ import {
 
 const NAV = [
   { id: "dashboard",  icon: LayoutDashboard, label: "Dashboard",         href: "/dashboard" },
-  { id: "agents",     icon: Bot,             label: "Agentes de IA",     href: "/agents", badge: "3" },
+  { id: "agents",     icon: Bot,             label: "Agentes de IA",     href: "/agents", badge: "Preview" },
   { id: "connectors", icon: Plug2,           label: "Conectores Google", href: "/connectors" },
-  { id: "logs",       icon: ScrollText,      label: "Log de Execução",   href: "/logs" },
+  { id: "logs",       icon: ScrollText,      label: "Status do Sync",    href: "/logs" },
 ];
 
 interface SidebarProps {

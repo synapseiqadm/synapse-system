@@ -3,7 +3,7 @@ import { useState } from "react";
 import { Sidebar } from "../../components/Sidebar";
 import { AgentCard, type Agent } from "../../components/AgentCard";
 import { AgentDecisionFeed, type Decision } from "../../components/AgentDecisionFeed";
-import { Bot, Zap, ShieldCheck, Activity, TrendingUp, Play, Pause } from "lucide-react";
+import { Bot, Info } from "lucide-react";
 
 // ─── Static Data ─────────────────────────────────────────────────────────────
 
@@ -14,12 +14,12 @@ const AGENTS: Agent[] = [
     role: "Otimização de ROAS",
     description:
       "Monitora continuamente o ROAS por campanha no BigQuery e realoca verbas automaticamente entre adsets para maximizar o retorno sobre investimento.",
-    status: "autonomous",
-    defaultMode: "auto",
-    lastAction: "há 4 min",
+    status: "preview",
+    defaultMode: "manual",
+    lastAction: "",
     metrics: ["fct_ad_spend", "fct_revenue", "ROAS", "Budget Allocation"],
-    actionsToday: 7,
-    successRate: 94,
+    actionsToday: 0,
+    successRate: 0,
     icon: "zap",
   },
   {
@@ -28,12 +28,12 @@ const AGENTS: Agent[] = [
     role: "Detecção de Anomalias",
     description:
       "Aplica análise de séries temporais sobre os dados do BigQuery para detectar picos anômalos de CAC, quedas abruptas de conversão ou desvios de CTR.",
-    status: "alert",
+    status: "preview",
     defaultMode: "manual",
-    lastAction: "há 12 min",
+    lastAction: "",
     metrics: ["CAC", "Conv. Rate", "CTR", "raw_google_ads"],
-    actionsToday: 3,
-    successRate: 88,
+    actionsToday: 0,
+    successRate: 0,
     icon: "alert",
   },
   {
@@ -42,12 +42,12 @@ const AGENTS: Agent[] = [
     role: "Performance de Criativos",
     description:
       "Analisa métricas de engajamento de banners e vídeos no Google Ads. Sugere pausar criativos abaixo do benchmarking e escalar os de melhor performance.",
-    status: "suggestion",
+    status: "preview",
     defaultMode: "manual",
-    lastAction: "há 28 min",
+    lastAction: "",
     metrics: ["CTR por criativo", "Hook Rate", "fct_creatives"],
-    actionsToday: 2,
-    successRate: 81,
+    actionsToday: 0,
+    successRate: 0,
     icon: "shield",
   },
 ];
@@ -124,13 +124,8 @@ const DECISIONS: Decision[] = [
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AgentsPage() {
-  const [activeNav, setActiveNav]       = useState("agents");
+  const [activeNav, setActiveNav]         = useState("agents");
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
-  const [allPaused, setAllPaused]         = useState(false);
-
-  const activeAgents    = AGENTS.filter((a) => a.status !== "paused").length;
-  const alertCount      = AGENTS.filter((a) => a.status === "alert").length;
-  const pendingDecisions = DECISIONS.filter((d) => d.status === "pending").length;
 
   return (
     <div className="flex h-screen bg-[#09090b] text-slate-200 overflow-hidden font-sans">
@@ -145,74 +140,32 @@ export default function AgentsPage() {
             </div>
             <div>
               <h1 className="text-sm font-bold text-slate-100">Agentes de IA</h1>
-              <p className="text-[10px] text-slate-600">LangChain · GPT-4o · BigQuery</p>
+              <p className="text-[10px] text-slate-600">Roadmap de produto · Visão planejada</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
-            {/* Stats pills */}
-            <div className="flex items-center gap-2">
-              <span className="flex items-center gap-1.5 text-[11px] text-slate-400 bg-[#0d1117] border border-[#1a2540] px-2.5 py-1 rounded-lg">
-                <Activity size={11} className="text-violet-400" />
-                <span className="font-semibold text-violet-300">{activeAgents}</span> ativos
-              </span>
-              {alertCount > 0 && (
-                <span className="flex items-center gap-1.5 text-[11px] text-red-400 bg-red-500/10 border border-red-500/20 px-2.5 py-1 rounded-lg font-semibold">
-                  <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
-                  {alertCount} alerta{alertCount > 1 ? "s" : ""}
-                </span>
-              )}
-              {pendingDecisions > 0 && (
-                <span className="flex items-center gap-1.5 text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-lg font-semibold">
-                  {pendingDecisions} pendente{pendingDecisions > 1 ? "s" : ""}
-                </span>
-              )}
-            </div>
-
-            {/* Global pause */}
-            <button
-              onClick={() => setAllPaused(!allPaused)}
-              className={`flex items-center gap-2 text-xs font-semibold px-3 py-1.5 rounded-xl border transition-all
-                ${allPaused
-                  ? "bg-emerald-600/20 border-emerald-500/30 text-emerald-300 hover:bg-emerald-600/30"
-                  : "bg-red-600/10 border-red-500/20 text-red-400 hover:bg-red-600/20"
-                }`}
-            >
-              {allPaused ? <Play size={13} /> : <Pause size={13} />}
-              {allPaused ? "Retomar todos" : "Pausar todos"}
-            </button>
-          </div>
+          <span className="text-[10px] font-semibold px-2.5 py-1 rounded-full bg-indigo-500/10 text-indigo-300/80 border border-indigo-500/15">
+            Preview
+          </span>
         </header>
 
         {/* Body: 2-column layout */}
         <div className="flex flex-1 gap-0 overflow-hidden">
-          {/* Left: agents + summary */}
+          {/* Left: disclaimer + agents */}
           <div className="flex flex-col w-[55%] overflow-y-auto p-5 border-r border-[#1a2540]">
-            {/* Summary bar */}
-            <div className="grid grid-cols-3 gap-3 mb-5">
-              {[
-                { label: "Ações hoje",       value: AGENTS.reduce((s, a) => s + a.actionsToday, 0).toString(), icon: Zap,         color: "text-violet-400", bg: "bg-violet-500/10" },
-                { label: "Taxa de sucesso",  value: `${Math.round(AGENTS.reduce((s, a) => s + a.successRate, 0) / AGENTS.length)}%`, icon: TrendingUp, color: "text-emerald-400", bg: "bg-emerald-500/10" },
-                { label: "Decisões pendentes",value: pendingDecisions.toString(), icon: ShieldCheck, color: "text-amber-400",  bg: "bg-amber-500/10" },
-              ].map((stat) => {
-                const Icon = stat.icon;
-                return (
-                  <div key={stat.label} className="flex items-center gap-3 bg-[#0d1117] border border-[#1a2540] rounded-xl p-3">
-                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${stat.bg}`}>
-                      <Icon size={15} className={stat.color} />
-                    </div>
-                    <div>
-                      <p className="text-lg font-bold text-slate-100 leading-none">{stat.value}</p>
-                      <p className="text-[10px] text-slate-500 mt-0.5">{stat.label}</p>
-                    </div>
-                  </div>
-                );
-              })}
+            {/* Disclaimer banner */}
+            <div className="flex items-start gap-3 bg-indigo-950/30 border border-indigo-800/30 rounded-xl px-4 py-3 mb-5">
+              <Info size={14} className="text-indigo-400 mt-0.5 flex-shrink-0" />
+              <p className="text-[11px] text-indigo-200/70 leading-relaxed">
+                Esta área apresenta a visão planejada para a camada de agentes de IA do SynapseIQ.
+                Nesta versão, os insights disponíveis no dashboard são determinísticos e baseados em regras.
+                Nenhum agente autônomo está ativo em produção neste momento.
+              </p>
             </div>
 
             {/* Agent cards */}
             <p className="text-[11px] text-slate-600 uppercase tracking-widest font-semibold mb-3">
-              Agentes configurados
+              Agentes planejados
             </p>
             <div className="space-y-3">
               {AGENTS.map((agent) => (
