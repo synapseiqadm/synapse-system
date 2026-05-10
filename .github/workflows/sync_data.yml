@@ -42,12 +42,13 @@ jobs:
         run: pip install -r backend/requirements.txt
 
       # ── 3. Google credentials ─────────────────────────────────────────────
-      # Secret GOOGLE_CREDENTIALS_JSON must contain the full service account JSON.
-      # Passing via env var avoids shell-interpolation issues with special characters.
+      # Secret GOOGLE_CREDENTIALS_JSON must contain the base64-encoded credentials.json.
+      # Generate with: [Convert]::ToBase64String([IO.File]::ReadAllBytes("credentials.json"))
+      # Base64 avoids JSON special-character issues when storing the secret.
       - name: Write Google service account credentials
         env:
-          GOOGLE_CREDS: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
-        run: printenv GOOGLE_CREDS > /tmp/gcp_credentials.json
+          GOOGLE_CREDS_B64: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+        run: echo "$GOOGLE_CREDS_B64" | base64 --decode > /tmp/gcp_credentials.json
 
       # ── 4. Run sync ───────────────────────────────────────────────────────
       - name: Run data sync
