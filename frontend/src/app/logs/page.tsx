@@ -1,8 +1,8 @@
 "use client";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Sidebar } from "../../components/Sidebar";
-import { ExecutionLogTable, type ExecutionLog } from "../../components/ExecutionLogTable";
-import { LogStatusBadge, type LogStatus } from "../../components/LogStatusBadge";
+import { SyncRunsTable } from "../../components/SyncRunsTable";
+import { LogStatusBadge } from "../../components/LogStatusBadge";
 import {
   Terminal,
   Search,
@@ -11,156 +11,162 @@ import {
   XCircle,
   Clock,
   Activity,
-  Download,
+  Database,
   RefreshCcw,
+  Wifi,
 } from "lucide-react";
-
-// ─── Mock Data ────────────────────────────────────────────────────────────────
-
-const ALL_LOGS: ExecutionLog[] = [
-  {
-    id: "LOG-250507-001",
-    timestamp: "Hoje, 10:42",
-    origin: "Growth Master",
-    originType: "agent",
-    action: "Ajuste de Orçamento",
-    details:
-      "Orçamento diário da campanha 'Black Friday - Prospecting' (Google Ads) aumentado de R$400 para R$460 (+15%). Gatilho: ROAS sustentado acima de 4.0x por 72h consecutivas.",
-    impact: "+R$720/semana em receita projetada",
-    status: "success",
-    platform: "Google Ads",
-    duration: "1.24s",
-    query:
-      "SELECT campaign_id, SUM(revenue)/SUM(spend) AS roas FROM fct_revenue WHERE date >= DATE_SUB(CURRENT_DATE, INTERVAL 3 DAY) GROUP BY 1",
-  },
-  {
-    id: "LOG-250507-002",
-    timestamp: "Hoje, 09:15",
-    origin: "Anomaly Scout",
-    originType: "agent",
-    action: "Pausa de Anúncio",
-    details:
-      "Criativo 'Video_Promo_01' pausado no Meta Ads. Motivo: CAC excedeu o threshold de R$80,00 (valor registado: R$94,50) por 2 ciclos consecutivos de análise.",
-    impact: "Economia estimada: R$189/dia em verba desperdiçada",
-    status: "success",
-    platform: "Meta Ads",
-    duration: "0.87s",
-  },
-  {
-    id: "LOG-250507-003",
-    timestamp: "Hoje, 08:00",
-    origin: "Sistema · Data Pipeline",
-    originType: "system",
-    action: "Sincronização RD Station",
-    details:
-      "Falha ao puxar leads do endpoint /contacts da API do RD Station. Token OAuth expirado. Pipeline interrompido. Nenhum dado escrito no BigQuery neste ciclo.",
-    status: "failure",
-    platform: "RD Station",
-    duration: "12.04s",
-    errorCode: "ERR_OAUTH_TOKEN_EXPIRED · HTTP 401 · Connector ID: rd-station-prod",
-  },
-  {
-    id: "LOG-250507-004",
-    timestamp: "Ontem, 18:30",
-    origin: "Creative Critic",
-    originType: "agent",
-    action: "Sugestão de Copy",
-    details:
-      "Aguardando aprovação humana para injetar nova copy de Search Ads. Proposta: substituir headline 'Compre Agora' por 'Resultados em 7 dias — Garantido'. CTR médio esperado: +22% com base em histórico de variantes similares.",
-    status: "pending",
-    platform: "Google Ads",
-    duration: "—",
-  },
-  {
-    id: "LOG-250506-005",
-    timestamp: "Ontem, 15:10",
-    origin: "Sistema · BigQuery",
-    originType: "system",
-    action: "ETL fct_ad_spend",
-    details:
-      "Pipeline dbt executado com sucesso. Modelo fct_ad_spend materializado. 3 datasets fontes processados (raw_google_ads, raw_meta_ads, raw_ga4_sessions). 0 testes falharam.",
-    impact: "24.820 linhas escritas · 3 datasets",
-    status: "success",
-    platform: "BigQuery",
-    duration: "8.32s",
-    query:
-      "-- dbt run --select fct_ad_spend\nSELECT source, campaign_id, SUM(spend) AS total_spend, SUM(clicks) AS total_clicks FROM raw_google_ads GROUP BY 1,2",
-  },
-  {
-    id: "LOG-250506-006",
-    timestamp: "Ontem, 12:00",
-    origin: "Growth Master",
-    originType: "agent",
-    action: "Realocação Revertida",
-    details:
-      "Realocação de R$300 da campanha 'Remarketing - 7D' para 'Lookalike 5%' revertida após 4h. Motivo: ROAS da campanha destino caiu abaixo do threshold logo após o aumento de orçamento.",
-    status: "reverted",
-    platform: "Google Ads",
-    duration: "0.92s",
-  },
-  {
-    id: "LOG-250506-007",
-    timestamp: "Ontem, 09:00",
-    origin: "Sistema · Data Pipeline",
-    originType: "system",
-    action: "Sincronização GA4",
-    details:
-      "Sessões, eventos e conversões dos últimos 7 dias importados com sucesso para o dataset raw_ga4_sessions no BigQuery.",
-    impact: "9.340 sessões · 41.200 eventos",
-    status: "success",
-    platform: "GA4",
-    duration: "5.18s",
-  },
-];
+import { createClient } from "@/utils/supabase/client";
+import { DEFAULT_WORKSPACE } from "@/lib/workspace";
+import {
+  type SyncRun,
+  type HealthStatus,
+  EXPECTED_SOURCES,
+  mapBadgeStatus,
+  latestPerExpectedSource,
+  computeHealth,
+  timeAgo,
+  formatDateShort,
+} from "@/lib/api/sync_runs";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type StatusFilter = "all" | LogStatus;
-type AgentFilter  = "all" | string;
+type StatusFilter = "all" | "success" | "error" | "running";
+type SourceFilter = "all" | string;
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const HEALTH_META: Record<
+  HealthStatus,
+  { label: string; color: string; bg: string; border: string }
+> = {
+  healthy: {
+    label: "Saudável",
+    color: "text-emerald-400",
+    bg: "bg-emerald-500/10",
+    border: "border-emerald-500/20",
+  },
+  warning: {
+    label: "Atenção",
+    color: "text-amber-400",
+    bg: "bg-amber-500/10",
+    border: "border-amber-500/20",
+  },
+  error: {
+    label: "Crítico",
+    color: "text-red-400",
+    bg: "bg-red-500/10",
+    border: "border-red-500/20",
+  },
+  unknown: {
+    label: "Sem dados",
+    color: "text-zinc-500",
+    bg: "bg-zinc-800/30",
+    border: "border-zinc-700/30",
+  },
+};
+
+const STATUS_FILTERS: { id: StatusFilter; label: string }[] = [
+  { id: "all", label: "Todos" },
+  { id: "success", label: "Sucesso" },
+  { id: "error", label: "Falha" },
+  { id: "running", label: "Em execução" },
+];
+
+// ─── Summary computation ──────────────────────────────────────────────────────
+
+function computeSummary(runs: SyncRun[]) {
+  const latestMap = latestPerExpectedSource(runs);
+  const health = computeHealth(latestMap);
+
+  const latestRun = runs[0] ?? null;
+
+  const sourcesOk = EXPECTED_SOURCES.filter(
+    (s) => latestMap[s]?.status === "success",
+  ).length;
+
+  const rowsLoaded = EXPECTED_SOURCES.reduce((acc, s) => {
+    return acc + (latestMap[s]?.rows_loaded ?? 0);
+  }, 0);
+
+  const sevenDaysAgo = new Date();
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  const recentErrors = runs.filter(
+    (r) =>
+      r.status === "error" && new Date(r.started_at) >= sevenDaysAgo,
+  ).length;
+
+  const latestFinished = EXPECTED_SOURCES.map((s) => latestMap[s]?.finished_at)
+    .filter(Boolean)
+    .sort()
+    .at(-1) ?? null;
+
+  return {
+    health,
+    latestRun,
+    sourcesOk,
+    rowsLoaded,
+    recentErrors,
+    latestFinished,
+  };
+}
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function LogsPage() {
-  const [activeNav, setActiveNav]     = useState("logs");
-  const [search, setSearch]           = useState("");
+  const [activeNav, setActiveNav] = useState("logs");
+  const [runs, setRuns] = useState<SyncRun[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [agentFilter, setAgentFilter]   = useState<AgentFilter>("all");
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
 
-  const origins = useMemo(() => {
-    const unique = Array.from(new Set(ALL_LOGS.map((l) => l.origin)));
-    return ["all", ...unique];
+  useEffect(() => {
+    async function load() {
+      setLoading(true);
+      setFetchError(null);
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("sync_runs")
+        .select("*")
+        .eq("workspace_id", DEFAULT_WORKSPACE.id)
+        .order("started_at", { ascending: false })
+        .limit(50);
+
+      if (error) {
+        setFetchError(error.message);
+      } else {
+        setRuns((data as SyncRun[]) ?? []);
+      }
+      setLoading(false);
+    }
+    load();
   }, []);
 
+  const sources = useMemo(() => {
+    const unique = Array.from(new Set(runs.map((r) => r.data_source)));
+    return ["all", ...unique];
+  }, [runs]);
+
   const filtered = useMemo(() => {
-    return ALL_LOGS.filter((log) => {
-      if (statusFilter !== "all" && log.status !== statusFilter) return false;
-      if (agentFilter !== "all" && log.origin !== agentFilter) return false;
+    return runs.filter((run) => {
+      if (statusFilter !== "all" && run.status !== statusFilter) return false;
+      if (sourceFilter !== "all" && run.data_source !== sourceFilter) return false;
       if (search.trim()) {
         const q = search.toLowerCase();
         return (
-          log.action.toLowerCase().includes(q) ||
-          log.origin.toLowerCase().includes(q) ||
-          log.details.toLowerCase().includes(q) ||
-          log.id.toLowerCase().includes(q) ||
-          (log.platform?.toLowerCase().includes(q) ?? false)
+          run.data_source.toLowerCase().includes(q) ||
+          run.source_platform.toLowerCase().includes(q) ||
+          run.status.toLowerCase().includes(q) ||
+          (run.error_message?.toLowerCase().includes(q) ?? false)
         );
       }
       return true;
     });
-  }, [search, statusFilter, agentFilter]);
+  }, [runs, search, statusFilter, sourceFilter]);
 
-  const successCount  = ALL_LOGS.filter((l) => l.status === "success").length;
-  const failureCount  = ALL_LOGS.filter((l) => l.status === "failure").length;
-  const pendingCount  = ALL_LOGS.filter((l) => l.status === "pending").length;
-  const revertedCount = ALL_LOGS.filter((l) => l.status === "reverted").length;
-
-  const STATUS_FILTERS: { id: StatusFilter; label: string }[] = [
-    { id: "all",      label: "Todos" },
-    { id: "success",  label: "Sucesso" },
-    { id: "failure",  label: "Falha" },
-    { id: "pending",  label: "Pendente" },
-    { id: "reverted", label: "Revertido" },
-  ];
+  const summary = useMemo(() => computeSummary(runs), [runs]);
+  const healthMeta = HEALTH_META[summary.health];
 
   return (
     <div className="flex h-screen bg-[#09090b] text-slate-200 overflow-hidden font-sans">
@@ -174,73 +180,189 @@ export default function LogsPage() {
               <Terminal size={14} className="text-zinc-300" />
             </div>
             <div>
-              <h1 className="text-sm font-bold text-slate-100">Log de Execução</h1>
+              <h1 className="text-sm font-bold text-slate-100">Observabilidade · Sync</h1>
               <p className="text-[10px] text-zinc-500 font-mono">
-                Audit trail · {ALL_LOGS.length} entradas
+                sync_runs · {loading ? "carregando…" : `${runs.length} registros`}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <button className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium text-zinc-400 hover:text-slate-200 bg-zinc-800/60 border border-zinc-700/60 hover:border-zinc-600 rounded-lg transition-colors">
-              <Download size={12} />
-              Exportar CSV
-            </button>
-            <button className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium text-zinc-400 hover:text-slate-200 bg-zinc-800/60 border border-zinc-700/60 hover:border-zinc-600 rounded-lg transition-colors">
-              <RefreshCcw size={12} />
-              Atualizar
-            </button>
-          </div>
+          <button
+            onClick={() => {
+              setLoading(true);
+              setFetchError(null);
+              const supabase = createClient();
+              supabase
+                .from("sync_runs")
+                .select("*")
+                .eq("workspace_id", DEFAULT_WORKSPACE.id)
+                .order("started_at", { ascending: false })
+                .limit(50)
+                .then(({ data, error }) => {
+                  if (error) setFetchError(error.message);
+                  else setRuns((data as SyncRun[]) ?? []);
+                  setLoading(false);
+                });
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium text-zinc-400 hover:text-slate-200 bg-zinc-800/60 border border-zinc-700/60 hover:border-zinc-600 rounded-lg transition-colors"
+          >
+            <RefreshCcw size={12} />
+            Atualizar
+          </button>
         </header>
 
         <main className="flex-1 overflow-y-auto p-5">
-          {/* Stats row */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
-            {[
-              { label: "Sucesso",   value: successCount,  icon: CheckCircle2, color: "text-emerald-400", bg: "bg-emerald-500/10", border: "border-emerald-500/15" },
-              { label: "Falhas",    value: failureCount,  icon: XCircle,     color: "text-red-400",     bg: "bg-red-500/10",     border: "border-red-500/15" },
-              { label: "Pendentes", value: pendingCount,  icon: Clock,       color: "text-amber-400",   bg: "bg-amber-500/10",   border: "border-amber-500/15" },
-              { label: "Revertidos",value: revertedCount, icon: Activity,    color: "text-slate-400",   bg: "bg-slate-700/20",   border: "border-slate-700/30" },
-            ].map((s) => {
-              const Icon = s.icon;
-              return (
-                <div key={s.label} className={`flex items-center gap-3 bg-[#0d1117] border ${s.border} rounded-xl p-3`}>
-                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${s.bg}`}>
-                    <Icon size={15} className={s.color} />
-                  </div>
-                  <div>
-                    <p className="text-xl font-bold text-slate-100 leading-none font-mono">{s.value}</p>
-                    <p className="text-[10px] text-zinc-500 mt-0.5">{s.label}</p>
-                  </div>
-                </div>
-              );
-            })}
+          {/* Fetch error banner */}
+          {fetchError && (
+            <div className="mb-4 flex items-center gap-2 bg-red-950/40 border border-red-800/40 rounded-xl px-4 py-3">
+              <XCircle size={14} className="text-red-400 flex-shrink-0" />
+              <p className="text-xs text-red-300 font-mono">{fetchError}</p>
+            </div>
+          )}
+
+          {/* Summary cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3 mb-5">
+            {/* Status geral */}
+            <div
+              className={`flex items-center gap-3 bg-[#0d1117] border ${healthMeta.border} rounded-xl p-3`}
+            >
+              <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${healthMeta.bg}`}>
+                <Wifi size={15} className={healthMeta.color} />
+              </div>
+              <div>
+                <p className={`text-base font-bold leading-none font-mono ${healthMeta.color}`}>
+                  {healthMeta.label}
+                </p>
+                <p className="text-[10px] text-zinc-500 mt-0.5">Status geral</p>
+              </div>
+            </div>
+
+            {/* Última execução */}
+            <div className="flex items-center gap-3 bg-[#0d1117] border border-zinc-800/60 rounded-xl p-3">
+              <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-indigo-500/10">
+                <Clock size={15} className="text-indigo-400" />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-slate-100 leading-none font-mono">
+                  {loading
+                    ? "—"
+                    : summary.latestRun
+                    ? timeAgo(summary.latestRun.started_at)
+                    : "—"}
+                </p>
+                <p className="text-[10px] text-zinc-500 mt-0.5">Última execução</p>
+              </div>
+            </div>
+
+            {/* Fontes sincronizadas */}
+            <div className="flex items-center gap-3 bg-[#0d1117] border border-emerald-500/15 rounded-xl p-3">
+              <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-emerald-500/10">
+                <CheckCircle2 size={15} className="text-emerald-400" />
+              </div>
+              <div>
+                <p className="text-xl font-bold text-slate-100 leading-none font-mono">
+                  {loading ? "—" : `${summary.sourcesOk}/${EXPECTED_SOURCES.length}`}
+                </p>
+                <p className="text-[10px] text-zinc-500 mt-0.5">Fontes sincronizadas</p>
+              </div>
+            </div>
+
+            {/* Linhas carregadas */}
+            <div className="flex items-center gap-3 bg-[#0d1117] border border-zinc-800/60 rounded-xl p-3">
+              <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-zinc-700/30">
+                <Database size={15} className="text-zinc-400" />
+              </div>
+              <div>
+                <p className="text-xl font-bold text-slate-100 leading-none font-mono">
+                  {loading ? "—" : summary.rowsLoaded.toLocaleString("pt-BR")}
+                </p>
+                <p className="text-[10px] text-zinc-500 mt-0.5">Linhas carregadas</p>
+              </div>
+            </div>
+
+            {/* Erros recentes */}
+            <div className="flex items-center gap-3 bg-[#0d1117] border border-red-500/15 rounded-xl p-3">
+              <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-red-500/10">
+                <XCircle size={15} className="text-red-400" />
+              </div>
+              <div>
+                <p className="text-xl font-bold text-slate-100 leading-none font-mono">
+                  {loading ? "—" : summary.recentErrors}
+                </p>
+                <p className="text-[10px] text-zinc-500 mt-0.5">Erros (7d)</p>
+              </div>
+            </div>
+
+            {/* Frescor dos dados */}
+            <div className="flex items-center gap-3 bg-[#0d1117] border border-zinc-800/60 rounded-xl p-3">
+              <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-blue-500/10">
+                <Activity size={15} className="text-blue-400" />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-slate-100 leading-none font-mono">
+                  {loading
+                    ? "—"
+                    : summary.latestFinished
+                    ? timeAgo(summary.latestFinished)
+                    : "—"}
+                </p>
+                <p className="text-[10px] text-zinc-500 mt-0.5">Frescor dos dados</p>
+              </div>
+            </div>
           </div>
+
+          {/* Data source health detail */}
+          {!loading && runs.length > 0 && (
+            <div className="flex flex-wrap gap-2 mb-5">
+              {EXPECTED_SOURCES.map((src) => {
+                const latest = latestPerExpectedSource(runs)[src];
+                return (
+                  <div
+                    key={src}
+                    className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5"
+                  >
+                    <LogStatusBadge
+                      status={latest ? mapBadgeStatus(latest.status) : "pending"}
+                      variant="dot"
+                    />
+                    <span className="text-[11px] font-mono text-zinc-400">{src}</span>
+                    {latest && (
+                      <span className="text-[10px] text-zinc-600 font-mono">
+                        {formatDateShort(latest.started_at)}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
 
           {/* Toolbar */}
           <div className="flex flex-wrap items-center gap-2 mb-4">
-            {/* Search */}
             <div className="relative flex-1 min-w-[200px]">
-              <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
+              <Search
+                size={13}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none"
+              />
               <input
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Buscar por campanha, agente ou ID..."
+                placeholder="Buscar por data source, plataforma ou erro…"
                 className="w-full pl-8 pr-3 py-2 bg-zinc-900 border border-zinc-800 hover:border-zinc-700 focus:border-zinc-600 rounded-xl text-xs text-slate-300 placeholder-zinc-600 outline-none transition-colors font-mono"
               />
             </div>
 
-            {/* Status filter */}
             <div className="flex items-center gap-1 bg-zinc-900 border border-zinc-800 rounded-xl p-1">
               {STATUS_FILTERS.map((f) => (
                 <button
                   key={f.id}
                   onClick={() => setStatusFilter(f.id)}
                   className={`text-[10px] font-semibold px-2.5 py-1 rounded-lg transition-all whitespace-nowrap
-                    ${statusFilter === f.id
-                      ? "bg-zinc-700 text-slate-200"
-                      : "text-zinc-500 hover:text-zinc-300"
+                    ${
+                      statusFilter === f.id
+                        ? "bg-zinc-700 text-slate-200"
+                        : "text-zinc-500 hover:text-zinc-300"
                     }`}
                 >
                   {f.label}
@@ -248,34 +370,38 @@ export default function LogsPage() {
               ))}
             </div>
 
-            {/* Agent filter */}
             <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2">
               <Filter size={11} className="text-zinc-500 flex-shrink-0" />
               <select
-                value={agentFilter}
-                onChange={(e) => setAgentFilter(e.target.value)}
+                value={sourceFilter}
+                onChange={(e) => setSourceFilter(e.target.value)}
                 className="bg-transparent text-[11px] text-slate-300 outline-none cursor-pointer"
               >
-                {origins.map((o) => (
-                  <option key={o} value={o} className="bg-zinc-900">
-                    {o === "all" ? "Todos os agentes" : o}
+                {sources.map((s) => (
+                  <option key={s} value={s} className="bg-zinc-900">
+                    {s === "all" ? "Todos os data sources" : s}
                   </option>
                 ))}
               </select>
             </div>
           </div>
 
-          {/* Result count */}
+          {/* Result count / clear */}
           <div className="flex items-center justify-between mb-3">
             <p className="text-[11px] text-zinc-600 font-mono">
-              {filtered.length === ALL_LOGS.length
-                ? `${ALL_LOGS.length} entradas`
-                : `${filtered.length} de ${ALL_LOGS.length} entradas`
-              }
+              {loading
+                ? "carregando…"
+                : filtered.length === runs.length
+                ? `${runs.length} registros`
+                : `${filtered.length} de ${runs.length} registros`}
             </p>
-            {(search || statusFilter !== "all" || agentFilter !== "all") && (
+            {(search || statusFilter !== "all" || sourceFilter !== "all") && (
               <button
-                onClick={() => { setSearch(""); setStatusFilter("all"); setAgentFilter("all"); }}
+                onClick={() => {
+                  setSearch("");
+                  setStatusFilter("all");
+                  setSourceFilter("all");
+                }}
                 className="text-[11px] text-indigo-400 hover:text-indigo-300 transition-colors"
               >
                 Limpar filtros
@@ -284,11 +410,24 @@ export default function LogsPage() {
           </div>
 
           {/* Table */}
-          <ExecutionLogTable logs={filtered} />
+          {loading ? (
+            <div className="rounded-xl border border-zinc-800 divide-y divide-zinc-800">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="px-4 py-3 flex items-center gap-4 animate-pulse">
+                  <div className="w-4 h-4 bg-zinc-800 rounded" />
+                  <div className="w-32 h-3 bg-zinc-800 rounded" />
+                  <div className="w-40 h-3 bg-zinc-800 rounded" />
+                  <div className="w-24 h-3 bg-zinc-800 rounded" />
+                  <div className="w-16 h-3 bg-zinc-800 rounded ml-auto" />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <SyncRunsTable runs={filtered} />
+          )}
 
-          {/* Footer hint */}
           <p className="text-[10px] text-zinc-700 font-mono mt-4 text-center">
-            Clique em qualquer linha para expandir os detalhes completos · Logs retidos por 90 dias
+            Clique em qualquer linha para expandir os detalhes · últimos 50 registros
           </p>
         </main>
       </div>

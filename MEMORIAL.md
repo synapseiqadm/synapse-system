@@ -1278,3 +1278,101 @@ Quando disparado pelo `schedule`, `inputs.dry_run` não existe (inputs só estã
 ### Pendência aberta
 
 `GA4_DATASET` permanece `""` em CI. Para ativar GA4 + checks L–S + insights GA4 no pipeline agendado, confirmar que a service account tem acesso ao dataset `analytics_289891960` e atualizar o valor no workflow.
+
+### Commit técnico
+
+Implementação publicada na `main`:
+
+`b8b30ca feat: add GitHub Actions workflow for manual data sync with dry-run`
+
+
+---
+
+## v1.4.4 Scheduled Sync Observability and Failure Diagnostics
+
+**Data:** Maio 2026
+
+### Objetivo
+
+Substituir a página `/logs` (que exibia apenas dados mock) por um painel operacional real, conectado à tabela `sync_runs` do Supabase, com cards de resumo de saúde do pipeline e tabela de execuções recentes.
+
+### O que foi entregue
+
+**Novos arquivos:**
+
+- `frontend/src/lib/api/sync_runs.ts` — tipo `SyncRun` alinhado ao schema da tabela, helpers `mapBadgeStatus()`, `latestPerExpectedSource()`, `computeHealth()`, `timeAgo()`, `formatDateShort()`, `runDuration()`
+- `frontend/src/components/SyncRunsTable.tsx` — componente client com linhas expansíveis, empty state e mapeamento de status para `LogStatusBadge`
+- `supabase/migrations/009_sync_runs_read_policy.sql` — migration RLS (ver abaixo)
+
+**Arquivo modificado:**
+
+- `frontend/src/app/logs/page.tsx` — reescrita completa:
+  - `useEffect` com browser Supabase client (anon key) lendo últimos 50 registros de `sync_runs` ordenados por `started_at DESC`
+  - 6 cards de resumo: Status geral, Última execução, Fontes sincronizadas, Linhas carregadas, Erros (7d), Frescor dos dados
+  - Barra de data sources esperados (`campaign_summary`, `kpi_cache_daily`, `keyword_analysis`) com badge de status por fonte
+  - Filtros: busca livre, status (all/success/error/running), data source
+  - Loading skeleton animado
+  - Banner de erro de fetch visível se a query falhar
+  - `ExecutionLogTable` substituído por `SyncRunsTable`
+
+### Cálculo de saúde (Status geral)
+
+O card "Status geral" é calculado exclusivamente com base no **último registro de cada data source esperado**, não em qualquer sucesso histórico dentro dos últimos 50 registros:
+
+- `healthy` — os 3 data sources (`campaign_summary`, `kpi_cache_daily`, `keyword_analysis`) têm `status = success` na última execução
+- `warning` — pelo menos um data source esperado não tem registro ou está em estado não-success
+- `error` — pelo menos um data source tem `status = error` na última execução
+- `unknown` — nenhum registro encontrado para nenhum data source esperado
+
+### Migration 009 — RLS sem policy retornava 0 linhas
+
+**Diagnóstico:** a tabela `sync_runs` tinha RLS habilitado (`rls_enabled = true`) desde a migration `008_align_sync_runs_rls.sql`, mas **nenhuma policy de SELECT** havia sido criada. Com RLS ativo e sem policy, o role `anon` (usado pelo browser client com a anon key) recebia 0 linhas silenciosamente — sem erro, sem mensagem, apenas empty result.
+
+**Decisão:**
+
+- Não desabilitar RLS (`ALTER TABLE ... DISABLE ROW LEVEL SECURITY`)
+- Não usar `TO anon USING (true)` isolado
+- Criar policy pública escopada ao workspace Woke, mais restritiva do que as outras tabelas MVP (`003`/`004`/`005`/`007` usam `USING (true)` completamente aberto)
+
+**Policy criada:**
+
+```sql
+CREATE POLICY "sync_runs_read_woke_workspace_mvp"
+  ON public.sync_runs
+  FOR SELECT
+  TO public
+  USING (workspace_id = 'a082fe86-a65f-4c9b-9442-fe775f47e3fc'::uuid);
+
+GRANT SELECT ON public.sync_runs TO anon, authenticated;
+```
+
+**Limitação futura:** quando o auth multi-tenant estiver pronto, substituir por policy workspace-scoped via `profiles.workspace_id = sync_runs.workspace_id` e remover o UUID hardcoded.
+
+### Validação executada
+
+**RLS e dados (via Supabase MCP):**
+
+Policy `sync_runs_read_woke_workspace_mvp` confirmada em `pg_policies`.
+
+Última execução retornada (2026-05-10 13:51 UTC):
+
+- `google_ads / campaign_summary / success / rows_loaded = 9`
+- `google_ads / kpi_cache_daily / success / rows_loaded = 87`
+- `google_ads / keyword_analysis / success / rows_loaded = 129`
+
+**Build e lint:**
+
+- `npm run build`: ✓ sem erros TypeScript, `/logs` gerado como static
+- `npm run lint`: 0 errors, 9 warnings todos pré-existentes (nenhum nos arquivos novos)
+- `grep SUPABASE_SERVICE_KEY frontend/src`: nenhum resultado
+- `grep sb_secret frontend/src`: nenhum resultado
+
+### Observações
+
+A busca livre no toolbar filtra por `data_source`, `source_platform`, `status` e `error_message`. O filtro de "agentes" da versão mock foi substituído por filtro de `data_source`.
+
+O campo `id` da tabela `sync_runs` é a chave de `key` nos rows do React — assume-se que é UUID único por execução.
+
+### Commit técnico
+
+Implementação publicada na `main` após confirmação:
