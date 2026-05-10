@@ -1376,3 +1376,56 @@ O campo `id` da tabela `sync_runs` é a chave de `key` nos rows do React — ass
 ### Commit técnico
 
 Implementação publicada na `main` após confirmação:
+
+`0ddd574 feat: add scheduled sync observability logs`
+
+
+---
+
+## v1.4.4.1 Navigation and Roadmap Preview Hygiene
+
+**Data:** Maio 2026
+
+### Objetivo
+
+Melhorar clareza de navegação e evitar interpretação incorreta de funcionalidades ainda planejadas. Nenhum agente de IA foi implementado nesta fase.
+
+### O que foi alterado
+
+**`frontend/src/components/Sidebar.tsx`**
+
+- Label `Log de Execução` renomeado para `Status do Sync`, refletindo o propósito operacional real da página `/logs`
+- Badge numérico `3` em `Agentes de IA` substituído por `Preview`, indicando que a funcionalidade não está ativa em produção
+
+**`frontend/src/app/dashboard/page.tsx`**
+
+- Adicionado card de atalho `Sincronização dos dados` ao fim da visão Geral, com CTA `Ver logs` apontando para `/logs`
+- Não duplica lógica de consulta a `sync_runs` — é apenas um link de navegação
+
+**`frontend/src/components/AgentCard.tsx`**
+
+- Novo status `"preview"` adicionado ao tipo `AgentStatus` e ao mapa `STATUS_CFG`
+- Stats row (ações hoje, taxa de sucesso) e footer (modo auto/manual, última ação) são ocultados quando `status === "preview"`, evitando que cards demonstrativos pareçam agentes em execução real
+
+**`frontend/src/app/agents/page.tsx`**
+
+- `/agents` permanece disponível como preview estratégico para visualização da visão futura do produto
+- Header ajustado: subtitle `LangChain · GPT-4o · BigQuery` removido; pill `Preview` adicionada
+- Botão `Pausar todos` removido (não há agentes ativos para pausar)
+- Summary bar com "Ações hoje", "Taxa de sucesso" e "Decisões pendentes" removida
+- Disclaimer adicionado no topo: informa que os insights do dashboard são determinísticos e baseados em regras, e que nenhum agente autônomo está ativo em produção
+- Todos os 3 agentes configurados com `status: "preview"`
+- Label da seção alterado de `Agentes configurados` para `Agentes planejados`
+
+### O que não foi alterado
+
+Pipeline Python, GitHub Actions, Supabase, migrations, RLS, lógica de sync — sem modificações.
+
+### Validações
+
+- `npm run build`: ✓ 0 erros TypeScript, `/agents`, `/dashboard` e `/logs` como rotas static
+- `npm run lint`: 0 errors, 9 warnings pré-existentes, nenhum nos arquivos alterados
+
+### Commit técnico
+
+`3fa012f chore: improve navigation and agents preview clarity`
