@@ -203,6 +203,13 @@ function DashSidebar({ active, onNavigate }: { active: NavItem; onNavigate: (n: 
         {/* Bottom items */}
         <NavBtn id="qualidade"     label="Qualidade"     icon={ShieldCheck} active={active} onNavigate={onNavigate} />
         <NavBtn id="insights"      label="Insights"      icon={Lightbulb}   active={active} onNavigate={onNavigate} />
+        <Link
+          href="/logs"
+          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/50"
+        >
+          <Database size={15} />
+          Status do Sync
+        </Link>
         <NavBtn id="canais"        label="Canais"        icon={Radio}       active={active} onNavigate={onNavigate} />
         <NavBtn id="configuracoes" label="Configurações" icon={Settings}    active={active} onNavigate={onNavigate} />
       </nav>
