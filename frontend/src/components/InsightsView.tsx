@@ -7,6 +7,7 @@ import {
   Database, RefreshCw, Building2,
 } from "lucide-react";
 import { DEFAULT_WORKSPACE } from "@/lib/workspace";
+import { computeDecisionBrief, type DecisionSignal, type Ga4DecisionInput } from "@/lib/decision";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -571,6 +572,55 @@ function InsightGroupCard({ group, updatingKey, updateError, onStatusChange }: {
   );
 }
 
+// ─── DecisionBriefSection ─────────────────────────────────────────────────────
+
+const CATEGORY_LABEL: Record<string, string> = {
+  priority:    "Prioridade",
+  risk:        "Risco",
+  opportunity: "Oportunidade",
+  tracking:    "Rastreamento",
+};
+
+const URGENCY_STYLE: Record<string, { border: string; dot: string; text: string }> = {
+  high:   { border: "border-l-amber-500",    dot: "bg-amber-400",   text: "text-amber-300/90" },
+  medium: { border: "border-l-zinc-600/60",  dot: "bg-zinc-500",    text: "text-zinc-300"     },
+  low:    { border: "border-l-zinc-700/40",  dot: "bg-zinc-600/50", text: "text-zinc-400"     },
+};
+
+function DecisionBriefSection({ signals }: { signals: DecisionSignal[] }) {
+  if (signals.length === 0) return null;
+  return (
+    <div className="mb-5 bg-[#0d0d10] border border-zinc-800/60 rounded-xl overflow-hidden">
+      <div className="px-4 py-2.5 border-b border-zinc-800/40 flex items-center justify-between">
+        <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">Resumo para Decisão</p>
+        <p className="text-[10px] text-zinc-700">Derivado dos insights do período · determinístico</p>
+      </div>
+      <div className="divide-y divide-zinc-800/30">
+        {signals.map((s, idx) => {
+          const uc = URGENCY_STYLE[s.urgency];
+          return (
+            <div key={idx} className={`px-4 py-3 border-l-2 ${uc.border}`}>
+              <div className="flex items-start gap-3">
+                <div className="flex items-center gap-1.5 shrink-0 pt-0.5 min-w-[90px]">
+                  <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${uc.dot}`} />
+                  <span className="text-[10px] font-semibold text-zinc-600 uppercase tracking-wider">
+                    {CATEGORY_LABEL[s.category]}
+                  </span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className={`text-xs leading-relaxed ${uc.text}`}>{s.statement}</p>
+                  <p className="text-[11px] text-zinc-500 mt-0.5">{s.direction}</p>
+                </div>
+                <span className="text-[10px] text-zinc-700 shrink-0 pt-0.5 font-mono">conf.&nbsp;{s.confidence}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ─── Filter / sort types ──────────────────────────────────────────────────────
 
 type StatusFilter = "all" | "new" | "reviewed" | "resolved" | "dismissed";
@@ -589,6 +639,7 @@ export function InsightsView() {
   const [search, setSearch]             = useState("");
   const [updatingKey, setUpdatingKey]   = useState<string | null>(null);
   const [updateErrors, setUpdateErrors] = useState<Record<string, string>>({});
+  const [ga4Input, setGa4Input]         = useState<Ga4DecisionInput | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -604,6 +655,24 @@ export function InsightsView() {
       setLoading(false);
     }
     load();
+  }, []);
+
+  useEffect(() => {
+    async function loadGa4() {
+      const { data } = await supabase
+        .from("ga4_first_light_summary")
+        .select("sessions, top_events")
+        .eq("workspace_id", DEFAULT_WORKSPACE.id)
+        .limit(1)
+        .maybeSingle();
+      if (data) {
+        setGa4Input({
+          sessions:   typeof data.sessions === "number" ? data.sessions : 0,
+          top_events: Array.isArray(data.top_events) ? (data.top_events as Ga4DecisionInput["top_events"]) : [],
+        });
+      }
+    }
+    loadGa4();
   }, []);
 
   const updateStatus = useCallback(async (id: string, to: InsightStatus) => {
@@ -681,6 +750,11 @@ export function InsightsView() {
 
   // Group groupable types into summary cards; singletons stay individual
   const consolidated = useMemo(() => computeConsolidated(filtered), [filtered]);
+
+  const decisionBrief = useMemo(
+    () => computeDecisionBrief(deduped, ga4Input),
+    [deduped, ga4Input],
+  );
 
   const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
     { value: "all",       label: "Todos"      },
@@ -796,6 +870,9 @@ export function InsightsView() {
           )}
         </div>
       </div>
+
+      {/* ── Decision brief ───────────────────────────────────────────────────── */}
+      <DecisionBriefSection signals={decisionBrief} />
 
       {/* ── Insights list ─────────────────────────────────────────────────────── */}
       <div className="bg-[#0d0d10] border border-zinc-800/60 rounded-xl overflow-hidden">
