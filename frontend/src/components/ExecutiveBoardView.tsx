@@ -34,7 +34,7 @@ interface DQCheck {
 }
 
 interface KpiRow    { date: string; metric_name: string; metric_value: number; }
-interface ChartPoint { date: string; roas: number; }
+interface ChartPoint { date: string; roas: number; spend: number; }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -58,6 +58,11 @@ function sinceDate(days: number): string {
 
 function formatBRL(v: number): string {
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
+}
+
+function fmtBRLCompact(v: number): string {
+  if (v >= 1000) return `R$ ${(v / 1000).toFixed(1).replace(".", ",")}k`;
+  return `R$ ${Math.round(v).toLocaleString("pt-BR")}`;
 }
 
 function fmtN(n: number): string {
@@ -94,8 +99,9 @@ function latestChecksByName(checks: DQCheck[]): DQCheck[] {
 function pivotChart(rows: KpiRow[]): ChartPoint[] {
   const map: Record<string, ChartPoint> = {};
   for (const r of rows) {
-    if (!map[r.date]) map[r.date] = { date: r.date, roas: 0 };
-    if (r.metric_name === "roas") map[r.date].roas = r.metric_value;
+    if (!map[r.date]) map[r.date] = { date: r.date, roas: 0, spend: 0 };
+    if (r.metric_name === "roas")       map[r.date].roas  = r.metric_value;
+    if (r.metric_name === "total_cost") map[r.date].spend = r.metric_value;
   }
   return Object.values(map).sort((a, b) => a.date.localeCompare(b.date));
 }
@@ -248,7 +254,7 @@ export function ExecutiveBoardView() {
           .from("kpi_cache_daily")
           .select("date, metric_name, metric_value")
           .eq("workspace_id", DEFAULT_WORKSPACE.id)
-          .eq("metric_name", "roas")
+          .in("metric_name", ["roas", "total_cost"])
           .gte("date", sinceDate(30))
           .order("date", { ascending: true }),
       ]);
@@ -283,6 +289,12 @@ export function ExecutiveBoardView() {
     const valid = chartData.filter(d => d.roas > 0);
     if (valid.length === 0) return null;
     return valid.reduce((s, d) => s + d.roas, 0) / valid.length;
+  }, [chartData]);
+
+  const totalSpend = useMemo(() => {
+    const valid = chartData.filter(d => d.spend > 0);
+    if (valid.length === 0) return null;
+    return valid.reduce((s, d) => s + d.spend, 0);
   }, [chartData]);
 
   const wasteAmount = useMemo(() =>
@@ -402,11 +414,12 @@ export function ExecutiveBoardView() {
             <span className="text-[9px] text-zinc-700 font-mono">últimos 30d</span>
           </div>
 
-          {/* 3 key metrics */}
-          <div className="px-4 pt-3 pb-2 grid grid-cols-3 gap-3">
-            <PulseMetric label="Sessões"   value={sessions > 0 ? fmtN(sessions) : "—"} />
-            <PulseMetric label="Conversão" value={fmtPct(convRate)} />
-            <PulseMetric label="ROAS"      value={avgRoas !== null ? `${avgRoas.toFixed(2)}x` : "—"} />
+          {/* 4 key metrics — escala × investimento × eficiência */}
+          <div className="px-4 pt-2.5 pb-1.5 grid grid-cols-2 gap-x-4 gap-y-2.5">
+            <PulseMetric label="Sessões"      value={sessions > 0 ? fmtN(sessions) : "—"} />
+            <PulseMetric label="Investimento" value={totalSpend !== null ? fmtBRLCompact(totalSpend) : "—"} />
+            <PulseMetric label="Conversão"    value={fmtPct(convRate)} />
+            <PulseMetric label="ROAS"         value={avgRoas !== null ? `${avgRoas.toFixed(2).replace(".", ",")}x` : "—"} />
           </div>
 
           {/* Mini AreaChart — ROAS trend */}
