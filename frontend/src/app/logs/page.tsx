@@ -1,6 +1,6 @@
 "use client";
 import { useState, useMemo, useEffect } from "react";
-import { Sidebar } from "../../components/Sidebar";
+import { DashNav } from "../../components/DashNav";
 import { SyncRunsTable } from "../../components/SyncRunsTable";
 import { LogStatusBadge } from "../../components/LogStatusBadge";
 import {
@@ -113,7 +113,6 @@ function computeSummary(runs: SyncRun[]) {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function LogsPage() {
-  const [activeNav, setActiveNav] = useState("logs");
   const [runs, setRuns] = useState<SyncRun[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -170,7 +169,7 @@ export default function LogsPage() {
 
   return (
     <div className="flex h-screen bg-[#09090b] text-slate-200 overflow-hidden font-sans">
-      <Sidebar active={activeNav} onNavigate={setActiveNav} />
+      <DashNav />
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* Header */}
