@@ -1750,3 +1750,94 @@ A Timeline (linha 3, coluna direita) foi compactada e padronizada como **activit
 ### Commits técnicos
 
 `2cb2092 feat: add executive board dashboard (v1.7.1/v1.7.2)`
+
+---
+
+## v1.7.3 — Performance Pulse Enrichment
+
+### Problema identificado
+
+O bloco Performance Pulse da v1.7.2 cobria bem eficiência e tendência, mas deixava duas dimensões fundamentais sem representação explícita:
+
+- **Escala** — havia sessões, mas como único proxy de volume; investimento ausente.
+- **Investimento** — o custo total do período não aparecia, tornando ROAS e Conversão descontextualizados. Um executivo não pode avaliar eficiência sem saber a base de investimento.
+
+O grid de 3 métricas em linha (`Sessões | Conversão | ROAS`) comunicava eficiência mas não a equação completa `volume × investimento × eficiência`.
+
+### Estratégia implementada
+
+#### Expansão para 4 métricas em grade 2×2
+
+Substituição do `grid-cols-3` (3 colunas em linha) por `grid-cols-2` (2×2):
+
+```
+Sessões       Investimento
+Conversão     ROAS
+```
+
+Mapeamento de dimensões:
+| Posição | Métrica | Dimensão |
+|---|---|---|
+| Linha 1, Col 1 | Sessões | Escala operacional |
+| Linha 1, Col 2 | Investimento | Contexto econômico |
+| Linha 2, Col 1 | Conversão | Eficiência de funil |
+| Linha 2, Col 2 | ROAS | Eficiência de retorno |
+
+#### Integração de spend via kpi_cache_daily
+
+A query existente de `kpi_cache_daily` foi expandida de filtro único (`.eq("metric_name", "roas")`) para filtro múltiplo (`.in("metric_name", ["roas", "total_cost"])`). Uma única query retorna ambas as métricas por data.
+
+Formato de exibição: `fmtBRLCompact()` — produz `R$ 12,4k` para valores ≥ 1.000, `R$ 830` abaixo disso. Compacto o suficiente para a densidade do bloco executivo.
+
+O `totalSpend` é a soma de `total_cost` nos últimos 30 dias — a mesma janela temporal do ROAS trend. Isso garante que investimento e eficiência sejam sempre comparáveis no mesmo período.
+
+#### Preparação estrutural para overlays históricos
+
+O tipo `ChartPoint` foi estendido com o campo `spend`:
+
+```typescript
+interface ChartPoint { date: string; roas: number; spend: number; }
+```
+
+E `pivotChart()` agora mapeia `total_cost` → `spend` por data, de forma que o dado já esteja disponível no chart data para futuras overlays sem necessidade de nova query ou refactor.
+
+Essa decisão antecipa:
+- v1.7.4: trend delta e interpretação de momentum
+- v1.8: comparações históricas período a período
+- v1.9: anotações causais sobre o chart
+
+#### Normalização decimal ROAS
+
+O formato `2.43x` (separador inglês) foi corrigido para `2,43x` (pt-BR), alinhando ROAS com `fmtPct()` e `fmtBRLCompact()` — consistência visual no bloco de métricas.
+
+### Observação arquitetural
+
+O chart de ROAS (AreaChart, 72px) atua nesta versão como **momentum decoration** — transmite sensação de tendência, mas não oferece interpretação operacional. O leitor vê se a linha sobe ou desce, mas não sabe:
+
+- se a variação é significativa;
+- qual foi o delta período a período;
+- se há anomalia ou ponto de inflexão.
+
+Essa limitação é consciente e não bloqueante para v1.7.3. A evolução está planejada para:
+
+**v1.7.4 — Operational Momentum Visualization**: transformar o chart de elemento visual decorativo para visualização interpretável de momentum operacional, com trend delta, contextual labels e preparação para anotações causais futuras.
+
+### Resultado
+
+| Dimensão | v1.7.2 | v1.7.3 |
+|---|---|---|
+| Métricas no Pulse | 3 (linha) | 4 (2×2 grid) |
+| Investimento | ausente | R$ total 30d |
+| Escala de sessões | presente | presente |
+| Decimal ROAS | 2.43x | 2,43x |
+| ChartPoint.spend | ausente | presente (prep estrutural) |
+| Queries Supabase | 5 | 5 (query expandida, não nova) |
+| Warnings lint | 10 | 10 (net zero) |
+
+### Arquivo alterado
+
+- `frontend/src/components/ExecutiveBoardView.tsx`
+
+### Commits técnicos
+
+`a68260f feat: enrich performance pulse metrics (v1.7.3)`
