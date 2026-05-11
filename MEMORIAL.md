@@ -1613,3 +1613,140 @@ Nenhuma alteração em backend, pipelines, cron, GitHub Actions, Supabase, RLS, 
 ### Commits técnicos
 
 `844060e feat: add insight consolidation engine (v1.6.1)`
+
+---
+
+## v1.7.1 — Executive Overview Layer
+
+### Mudança estratégica
+
+A v1.7.1 marca a **transição do SynapseIQ de dashboard métrico para dashboard operacional executivo**.
+
+A tab "Geral" respondia, até então, à pergunta *quanto gastamos?* — exibindo 4 MetricCards (custo, cliques, conversões, ROAS) e um AreaChart de tendência a partir de `kpi_cache_daily`. Esse modelo priorizava o consumo analítico tático, não o julgamento executivo.
+
+A partir da v1.7.1, a mesma posição de destaque responde à pergunta *qual é o estado da operação?* — com síntese determinística de cinco domínios.
+
+### Problema identificado
+
+- O dashboard abria em uma visão de Ads que duplicava o que a aba Campanhas já oferecia com mais detalhe.
+- Não havia superfície que sintetizasse a saúde operacional em visão única.
+- A inteligência gerada pela v1.7 (Decision Brief) existia apenas dentro de Insights — invisível para quem navegava pela visão geral.
+- Executivos e gestores precisavam de contexto imediato, não de números brutos.
+
+### Estratégia implementada
+
+#### Remoção completa do GeralView
+
+Eliminados de `dashboard/page.tsx`:
+- Componentes: `GeralView`, `MetricCard`, `CustomTooltip`
+- Interfaces: `KpiRow`, `ChartPoint`, `Summary`, `Period`
+- Funções: `sinceDate`, `pivotToChart`, `buildSummary`
+- Estado: `rows`, `loading`, `error`, `period`
+- useEffect: query `kpi_cache_daily` com seletor de período
+- Imports: Recharts completo, 6 ícones Lucide
+
+#### Criação do ExecutiveBoardView
+
+Novo componente `frontend/src/components/ExecutiveBoardView.tsx` com 5 seções:
+
+**1. Executive Health Overview** — saúde global derivada de `computeHealth()` sobre `sync_runs`. Uma linha compacta com status agregado e indicadores por domínio.
+
+**2. Top Priorities** — sinais `computeDecisionBrief(insights, ga4)` renderizados com border-l-2 por categoria (priority/risk/opportunity/tracking). Máximo de 3 exibidos; zero estado = mensagem de saúde confirmada.
+
+**3. Operational Snapshot** — 3 células métricas compactas: sessões GA4, taxa de conversão, waste (custo sem conversão). Derivados de queries já existentes, sem novos endpoints.
+
+**4. Domain Health** — 5 linhas de status por domínio com heurística determinística:
+- **Funil**: `intent_rate > 20%` → saudável
+- **Conversão**: waste < R$100 → saudável, 100–500 → atenção, > R$500 → risco
+- **Tracking**: share de eventos suspeitos < 5% → saudável, 5–15% → atenção, > 15% → risco
+- **Governança**: nenhum check failed/warning → saudável
+- **Sincronização**: mapeado de `computeHealth()` (healthy/degraded/critical/unknown)
+
+**5. Operational Timeline** — 3 eventos mais recentes da operação: último sync, último check de governança, insight mais recente. Usa `timeAgo()` para exibição relativa.
+
+#### Reutilização de funções existentes
+
+Nenhuma lógica foi duplicada. Todos os cálculos usam funções já testadas:
+- `computeDecisionBrief()` — `@/lib/decision`
+- `computeHealth()`, `latestPerExpectedSource()`, `timeAgo()` — `@/lib/api/sync_runs`
+- `isSuspiciousEventName()` — `@/lib/funnel`
+
+#### Queries frontend (5 em Promise.all)
+
+Todas as tabelas já existiam e eram consultadas em outros componentes:
+- `insight_feed` — insights com evidência
+- `ga4_first_light_summary` — sessões e top events
+- `data_quality_report` — checks de governança
+- `sync_runs` — histórico de sincronização
+- `kpi_cache_daily` — ROAS trend (nova query, tabela existente)
+
+### Impacto arquitetural
+
+**Nenhuma alteração em backend, pipelines, cron, GitHub Actions, Supabase, RLS, auth ou migrations.**
+
+O `ExecutiveBoardView` é o núcleo estratégico da plataforma: a superfície que sintetiza toda a inteligência gerada pelas camadas anteriores (sync, quality, insights, decision) em um painel executivo unificado. É a manifestação visual da arquitetura warehouse-native.
+
+### Arquivos alterados
+
+- `frontend/src/app/dashboard/page.tsx` — 369 linhas alteradas (52 inserções, 326 remoções)
+- `frontend/src/components/ExecutiveBoardView.tsx` — criado (482 linhas)
+
+---
+
+## v1.7.2 — Executive Density & Performance Pulse Refinement
+
+### Problema identificado
+
+O layout da v1.7.1, apesar de correto em conteúdo, era excessivamente vertical: 5 cards empilhados sem relação visual entre eles, nenhum contexto temporal de tendência e ausência de percepção de momentum econômico.
+
+O executivo que abre o painel precisa, em uma tela, de três camadas simultâneas:
+1. **Saúde global** — estou bem ou mal?
+2. **O que precisa de atenção agora** — prioridades e pulso econômico
+3. **Estado dos domínios e cronologia** — onde está o risco e quando aconteceu
+
+### Estratégia implementada
+
+#### Reorganização de densidade UX: 5 seções verticais → 3 linhas em grid
+
+```
+Linha 1  │ Health Strip (faixa única, horizontal)
+─────────┼────────────────────────────────────────────────────────
+Linha 2  │  Prioridades (3/5 colunas)  │  Performance Pulse (2/5)
+─────────┼──────────────────────────────┼─────────────────────────
+Linha 3  │  Domain Health (50%)         │  Timeline (50%)
+```
+
+A densidade foi atingida reduzindo padding interno (`py-1.5`, `text-[11px]`) e eliminando headers redundantes entre seções adjacentes.
+
+#### Reintegração do contexto econômico: Performance Pulse
+
+Introdução do **Performance Pulse** — painel compacto (col-span-2) com:
+
+- **3 métricas inline**: Sessões, Taxa de Conversão, ROAS médio (30 dias)
+- **Mini AreaChart** (altura 72px): tendência de ROAS dos últimos 30 dias via `kpi_cache_daily`, com gradiente indigo (`#6366f1`) e tooltip formatado `2.43x`
+- **Footer contextual**: waste acumulado, tempo do último sync, share de tracking suspeito
+
+O ROAS chart é deliberadamente secundário — sutil, sem eixos Y, sem grid, sem labels. Serve como sinal de tendência, não como ferramenta analítica. O papel analítico pertence às abas especializadas.
+
+#### Preparação estrutural para timeline causal futura
+
+A Timeline (linha 3, coluna direita) foi compactada e padronizada como **activity strip** com 3 eventos ordenados cronologicamente. A estrutura está preparada para receber, em versão futura, a correlação causal entre eventos operacionais e variações de performance — o que transformaria a timeline em ferramenta de root cause, não apenas de log.
+
+### Resultado
+
+| Dimensão | v1.7.1 | v1.7.2 |
+|---|---|---|
+| Layout | 5 cards verticais | 3 linhas em grid |
+| Contexto econômico | Ausente | ROAS trend 30d |
+| Percepção de momentum | Nenhuma | Performance Pulse |
+| Densidade visual | Baixa | Alta (py-1.5, 11px) |
+| Queries Supabase | 4 | 5 (+kpi_cache_daily ROAS) |
+| Warnings lint | +0 vs. baseline | +0 vs. baseline |
+
+### Arquivos alterados
+
+- `frontend/src/components/ExecutiveBoardView.tsx` — reescrito (v1.7.1 → v1.7.2)
+
+### Commits técnicos
+
+`2cb2092 feat: add executive board dashboard (v1.7.1/v1.7.2)`
