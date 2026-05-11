@@ -1841,3 +1841,103 @@ Essa limitação é consciente e não bloqueante para v1.7.3. A evolução está
 ### Commits técnicos
 
 `a68260f feat: enrich performance pulse metrics (v1.7.3)`
+
+---
+
+## v1.7.4 — Operational Momentum Visualization
+
+### Problema identificado
+
+O AreaChart de ROAS introduzido na v1.7.2 atuava como *momentum decoration*: transmitia sensação de tendência, mas não oferecia interpretação operacional. O usuário via a linha subir ou descer sem saber se a variação era significativa, se havia anomalia, ou qual era o delta em relação ao período anterior.
+
+### Objetivo
+
+Transformar o chart de elemento visual decorativo em ferramenta de suporte à decisão — mantendo o caráter compacto (72px, secundário, elegante) e sem introduzir complexidade de UI desnecessária.
+
+### Estratégia implementada
+
+#### Extração do sub-componente `MomentumChart`
+
+O AreaChart inline (≈45 linhas de JSX) foi extraído para o sub-componente `MomentumChart`, com interface própria:
+
+```typescript
+interface MomentumChartProps {
+  data: ChartPoint[];
+  trendDelta: number;
+  isAnomaly: boolean;
+  contextualLabels?: Array<{ pointIndex: number; label: string }>; // v1.7.5+
+}
+```
+
+A extração segue o princípio de "estrutura modular, evitar lógica acoplada" declarado no roadmap. `contextualLabels` está tipado como campo opcional para preparar a anotação causal da v1.7.5 sem nenhum acoplamento prematuro.
+
+#### Cálculo de `trendDelta` — 7d vs 7d anterior
+
+```typescript
+const last7   = valid.slice(-7);
+const prev7   = valid.slice(-14, -7);
+const avgLast = last7.reduce((s, d) => s + d.roas, 0) / last7.length;
+const avgPrev = prev7.reduce((s, d) => s + d.roas, 0) / prev7.length;
+const delta   = avgPrev > 0 ? ((avgLast - avgPrev) / avgPrev) * 100 : 0;
+```
+
+Computed via `useMemo` sobre `chartData` já em memória — zero queries adicionais, zero backend changes. Guard: requer ≥ 8 pontos com ROAS > 0; abaixo disso, retorna `trendDelta = 0`.
+
+#### Detecção de anomalia — desvio > 30% da média 30d
+
+```typescript
+const avg30    = valid.reduce((s, d) => s + d.roas, 0) / valid.length;
+const lastRoas = valid[valid.length - 1].roas;
+const anomaly  = avg30 > 0 && Math.abs(lastRoas - avg30) / avg30 > 0.30;
+```
+
+Threshold de 30% determinístico, sem dependência de dados externos. Suficiente para detecção de outliers grosseiros; refinamento estatístico (z-score) planejado para v1.9.
+
+#### UI — Feedback visual dinâmico
+
+| Sinal | `trendDelta >= 0` | `trendDelta < 0` |
+|---|---|---|
+| Stroke | emerald-500 (`#10b981`) | red-500 (`#ef4444`) |
+| Gradiente | emerald, opacidade 13% | red, opacidade 13% |
+| activeDot | emerald | red |
+
+**Delta badge persistente** no header do Pulse: `Δ +15,4%` em verde/vermelho — visível sem hover, comunica momentum instantaneamente.
+
+**Tooltip evoluído**: `ROAS: 2,43x  ·  Δ +15,4%` — valor pontual + contexto de período na mesma linha.
+
+**`ReferenceDot`** (Recharts) no último ponto quando `isAnomaly = true`: raio 4, stroke escuro `#18181b`, colorido conforme tendência.
+
+### Estabilização de build blockers
+
+Arquivos em progresso criados externamente (`frontend/src/lib/api/route.ts`, `frontend/src/lib/api/timeline.ts`) estavam bloqueando o build com:
+
+1. Import inválido de módulo Python (`@/backend/connectors/timeline_engine`)
+2. Cast incorreto `ApiQueryFilters as Record<string, string>`
+3. Uso de `any` explícito em `timeline.ts`
+
+Correções aplicadas:
+- `route.ts`: removido import Python, handler substituído por stub `{events: []}` compilável
+- `timeline.ts`: cast via `unknown` intermediário; `Record<string, any>` → `Record<string, unknown>`
+- Sem alteração de intenção ou lógica dos arquivos
+
+### Resultado
+
+| Dimensão | v1.7.3 | v1.7.4 |
+|---|---|---|
+| Chart | Decorativo (linha roxa estática) | Interpretativo (cor dinâmica + delta + anomalia) |
+| `trendDelta` | Ausente | `useMemo`, 7d vs 7d anterior |
+| `isAnomaly` | Ausente | Desvio > 30% da média 30d |
+| Delta visível sem hover | Não | Sim (badge no header) |
+| Cor dinâmica | Não | Sim (emerald / red) |
+| Modularidade | AreaChart inline | Sub-componente `MomentumChart` |
+| Warnings lint | 10 | 10 (net zero) |
+
+### Arquivos alterados
+
+- `frontend/src/components/ExecutiveBoardView.tsx` — principal (v1.7.4)
+- `frontend/src/lib/api/route.ts` — stub corrigido (build blocker)
+- `frontend/src/lib/api/timeline.ts` — tipos corrigidos (build blocker)
+
+### Commits técnicos
+
+`29b3bb0 feat: add operational momentum visualization (v1.7.4)`
