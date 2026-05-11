@@ -1520,3 +1520,96 @@ A SynapseIQ deixa de atuar apenas como dashboard operacional e passa a se posici
 ### Commits técnicos
 
 `822c821 feat: add semantic funnel intelligence layer (v1.6)`
+
+---
+
+## v1.6.1 — Insight Consolidation Engine
+
+### Problema identificado
+
+Após o enriquecimento semântico da v1.6, o dashboard passou a gerar múltiplos sinais por execução de sync. O resultado era:
+
+- 85 registros em flat list operacional;
+- múltiplos cards com título idêntico ("Keyword com custo e zero conversões");
+- repetição multi-período do mesmo sinal (cada sync criava nova linha por período);
+- coexistência de tipos semanticamente contraditórios (GA4 configurado / não configurado);
+- ausência de hierarquia executiva — todos os itens nivelados em `medium`.
+
+### Estratégia implementada
+
+#### Deduplicação por `dedupe_key`
+
+Frontend-only. Para cada `dedupe_key`, mantém apenas o registro mais recente (`date_range_start` mais alto). Em empate de período, prioriza status `reviewed` > `new` — preservando o trabalho já feito pelo analista. O histórico completo permanece intacto no banco.
+
+#### Consolidação executiva por tipo
+
+Group cards para os dois tipos de maior volume:
+
+- `campaign_zero_conversions_with_cost`
+- `keyword_zero_conversions_with_cost`
+
+Cada group card exibe:
+
+- headline executiva (ex: "6 campanhas consumiram verba sem registrar conversões");
+- custo total agregado;
+- quantidade de itens afetados;
+- severidade dominante do grupo;
+- drilldown expandível com scroll limitado (`max-h-96`), preservando `InsightCard` individual completo com todas as ações de status.
+
+#### Mutual exclusion semântica
+
+Implementação explícita via constante `MUTUALLY_EXCLUSIVE_TYPES`:
+
+```typescript
+const MUTUALLY_EXCLUSIVE_TYPES: string[][] = [
+  [
+    "ga4_not_configured",
+    "ga4_configured_but_incomplete",
+    "ga4_configured_but_no_conversion_events",
+  ],
+];
+```
+
+Garante que apenas o insight mais recente de cada grupo semanticamente exclusivo apareça na surface view.
+
+#### InsightCard modo compacto
+
+Adição de `compact?: boolean` ao `InsightCard` existente:
+
+- padding reduzido;
+- bloco de recomendação oculto;
+- título em `text-xs`;
+- ações de status preservadas.
+
+Usado exclusivamente dentro do drilldown dos group cards.
+
+### Resultado
+
+Antes:
+- 85 registros em flat list operacional.
+
+Depois:
+- ~8 itens executivos na surface view;
+- ~22 sinais únicos deduplicados;
+- 2 group cards com agregados executivos;
+- 6 singles individuais;
+- footer exibe: `N itens · M sinais únicos · K registros`.
+
+### UX
+
+- Dashboard mais calmo, priorizado e executivo;
+- leitura de alto nível sem perda de granularidade operacional;
+- drilldown compacto com scroll evita explosão vertical;
+- experience próxima de Revenue Intelligence / Growth Operations enterprise.
+
+### Arquivo alterado
+
+- `frontend/src/components/InsightsView.tsx`
+
+### Impacto arquitetural
+
+Nenhuma alteração em backend, pipelines, cron, GitHub Actions, Supabase, RLS, auth ou migrations. Toda a consolidação é frontend-only com heurísticas determinísticas.
+
+### Commits técnicos
+
+`844060e feat: add insight consolidation engine (v1.6.1)`
