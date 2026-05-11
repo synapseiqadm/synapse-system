@@ -65,6 +65,22 @@ def _insight(
 
 # ── Data quality state ─────────────────────────────────────────────────────────
 
+def get_previous_insight_state(supabase: Client, dedupe_key: str) -> dict | None:
+    """
+    Recupera o estado do mesmo insight no período anterior.
+    Base para o 'Snapshot Diff Engine' (v1.8).
+    """
+    resp = (
+        supabase.table("insight_feed")
+        .select("evidence,severity,status,created_at")
+        .eq("workspace_id", WOKE_WORKSPACE_ID)
+        .eq("dedupe_key", dedupe_key)
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    return resp.data[0] if resp.data else None
+
 def get_latest_data_quality_state(supabase: Client) -> dict:
     """
     Returns aggregated state from the most recent execution of each check.

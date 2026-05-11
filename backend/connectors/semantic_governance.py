@@ -16,6 +16,7 @@ from config import (
     GOOGLE_ADS_DATASET,
     GOOGLE_ADS_CUSTOMER_ID,
 )
+from operational_events import record_operational_event # Novo import
 
 _DATE_START_SUFFIX = DATE_RANGE_START.strftime("%Y%m%d")
 _DATE_END_SUFFIX   = DATE_RANGE_END.strftime("%Y%m%d")
