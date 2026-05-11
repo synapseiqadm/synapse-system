@@ -36,8 +36,16 @@ interface DQCheck {
 interface KpiRow     { date: string; metric_name: string; metric_value: number; }
 interface ChartPoint { date: string; roas: number; spend: number; }
 
-type MarkerType = "sync" | "governance" | "insight";
+type MarkerType = "sync" | "governance" | "insight" | "anomaly";
 interface ChartMarker { date: string; type: MarkerType; }
+
+interface AnomalyEvent {
+  category:     string;
+  title:        string;
+  description:  string | null;
+  impact_scope: Record<string, unknown> | null;
+  occurred_at:  string;
+}
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -185,6 +193,7 @@ const MARKER_STYLE: Record<MarkerType, { stroke: string; letter: string }> = {
   sync:       { stroke: "#52525b", letter: "S" },
   governance: { stroke: "#b45309", letter: "G" },
   insight:    { stroke: "#6366f1", letter: "I" },
+  anomaly:    { stroke: "#f97316", letter: "!" },
 };
 
 const URGENCY_BORDER: Record<string, string> = {
@@ -328,14 +337,15 @@ export function ExecutiveBoardView() {
   const [ga4,      setGa4]      = useState<Ga4DecisionInput | null>(null);
   const [dqChecks, setDqChecks] = useState<DQCheck[]>([]);
   const [syncRuns, setSyncRuns] = useState<SyncRun[]>([]);
-  const [kpiRows,        setKpiRows]       = useState<KpiRow[]>([]);
-  const [loading,        setLoading]       = useState(true);
+  const [kpiRows,        setKpiRows]        = useState<KpiRow[]>([]);
+  const [anomalyEvents,  setAnomalyEvents]  = useState<AnomalyEvent[]>([]);
+  const [loading,        setLoading]        = useState(true);
   const [selectedPeriod, setSelectedPeriod] = useState<7 | 15 | 30>(30);
 
   useEffect(() => {
     async function loadAll() {
       setLoading(true);
-      const [insightRes, ga4Res, dqRes, syncRes, kpiRes] = await Promise.all([
+      const [insightRes, ga4Res, dqRes, syncRes, kpiRes, anomalyRes] = await Promise.all([
         supabase
           .from("insight_feed")
           .select("insight_type, status, evidence, dedupe_key, date_range_start")
@@ -367,6 +377,13 @@ export function ExecutiveBoardView() {
           .in("metric_name", ["roas", "total_cost"])
           .gte("date", sinceDate(30))
           .order("date", { ascending: true }),
+        supabase
+          .from("operational_events")
+          .select("category, title, description, impact_scope, occurred_at")
+          .eq("workspace_id", DEFAULT_WORKSPACE.id)
+          .eq("category", "kpi_anomaly")
+          .order("occurred_at", { ascending: false })
+          .limit(30),
       ]);
 
       setInsights(dedupeInsights((insightRes.data as MinInsight[]) ?? []));
@@ -382,7 +399,8 @@ export function ExecutiveBoardView() {
 
       setDqChecks((dqRes.data  as DQCheck[])  ?? []);
       setSyncRuns((syncRes.data as SyncRun[])  ?? []);
-      setKpiRows( (kpiRes.data  as KpiRow[])   ?? []);
+      setKpiRows(     (kpiRes.data     as KpiRow[])      ?? []);
+      setAnomalyEvents((anomalyRes.data as AnomalyEvent[]) ?? []);
       setLoading(false);
     }
     loadAll();
@@ -451,9 +469,10 @@ export function ExecutiveBoardView() {
     tryAdd(latestSync?.finished_at ?? latestSync?.started_at, "sync");
     tryAdd(dqChecks[0]?.checked_at, "governance");
     tryAdd(insights.find(i => i.date_range_start)?.date_range_start, "insight");
+    anomalyEvents.forEach(ev => tryAdd(ev.occurred_at, "anomaly"));
 
     return result;
-  }, [periodData, syncRuns, dqChecks, insights]);
+  }, [periodData, syncRuns, dqChecks, insights, anomalyEvents]);
 
   const { sessions, convRate, suspShare } = useMemo(() => {
     if (!ga4 || ga4.sessions === 0) {
@@ -642,8 +661,13 @@ export function ExecutiveBoardView() {
 
         {/* Timeline */}
         <div className="bg-[#0f1117] border border-zinc-800/60 rounded-xl overflow-hidden">
-          <div className="px-4 py-2.5 border-b border-zinc-800/40">
+          <div className="px-4 py-2.5 border-b border-zinc-800/40 flex items-center justify-between">
             <p className="text-[10px] font-semibold text-zinc-600 uppercase tracking-wider">Timeline Operacional</p>
+            {anomalyEvents.length > 0 && (
+              <span className="text-[9px] font-mono text-orange-400/80 bg-orange-500/10 border border-orange-500/20 rounded px-1.5 py-0.5">
+                {anomalyEvents.length} anomalia{anomalyEvents.length !== 1 ? "s" : ""}
+              </span>
+            )}
           </div>
           <div className="divide-y divide-zinc-800/30">
             <div className="px-4 py-1.5 flex items-center gap-3">
@@ -676,6 +700,39 @@ export function ExecutiveBoardView() {
                 {insights.length} sinais únicos
               </span>
             </div>
+            {anomalyEvents.slice(0, 3).map((ev, i) => {
+              const scope   = ev.impact_scope ?? {};
+              const dev     = typeof scope.deviation_pct === "number" ? scope.deviation_pct : 0;
+              const last    = typeof scope.last_value    === "number" ? scope.last_value    : 0;
+              const mean    = typeof scope.mean_value    === "number" ? scope.mean_value    : 0;
+              const days    = typeof scope.lookback_days === "number" ? scope.lookback_days : 30;
+              const sign    = dev >= 0 ? "+" : "";
+              const dateStr = ev.occurred_at.split("T")[0].split("-").reverse().slice(0, 2).join("/");
+              const tooltip = `ROAS ${sign}${dev.toFixed(1)}% vs média ${days}d · último: ${last.toFixed(2)}x · média: ${mean.toFixed(2)}x`;
+              return (
+                <div
+                  key={i}
+                  className="group relative px-4 py-1.5 flex items-center gap-3 hover:bg-orange-500/5 transition-colors cursor-default"
+                  title={tooltip}
+                >
+                  <span className="text-[10px] font-bold text-orange-400 shrink-0 w-3 text-center">!</span>
+                  <span className="text-[11px] text-zinc-500 w-24 shrink-0 truncate">Anomalia</span>
+                  <span className="text-[11px] text-orange-300/80 font-mono truncate">
+                    {sign}{dev.toFixed(1)}% ROAS
+                  </span>
+                  <span className="text-[10px] text-zinc-600 ml-auto font-mono shrink-0">{dateStr}</span>
+                  {/* Hover tooltip */}
+                  <div className="pointer-events-none absolute bottom-full left-4 mb-1.5 hidden group-hover:flex flex-col gap-0.5 bg-zinc-900 border border-zinc-700/80 rounded-lg px-3 py-2 z-20 shadow-xl min-w-[220px]">
+                    <span className="text-[10px] font-semibold text-orange-400 mb-1">{ev.title}</span>
+                    <span className="text-[9px] text-zinc-400 font-mono">Desvio:&nbsp;
+                      <span className={dev >= 0 ? "text-emerald-400" : "text-red-400"}>{sign}{dev.toFixed(1)}%</span>
+                    </span>
+                    <span className="text-[9px] text-zinc-400 font-mono">Último:&nbsp;<span className="text-zinc-200">{last.toFixed(2)}x</span></span>
+                    <span className="text-[9px] text-zinc-400 font-mono">Média {days}d:&nbsp;<span className="text-zinc-200">{mean.toFixed(2)}x</span></span>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>

@@ -34,7 +34,7 @@ from sync_ga4 import (
 from data_quality import run_data_quality_checks, write_quality_reports
 from insights import generate_insights, write_insights, resolve_obsolete_insights
 from semantic_governance import load_measurement_config
-from operational_events import record_operational_event
+from operational_events import record_operational_event, detect_kpi_anomaly
 
 
 def main(dry_run: bool = False) -> None:
@@ -138,6 +138,9 @@ def main(dry_run: bool = False) -> None:
         if kpi_run_id:
             finish_sync_run_error(supabase, kpi_run_id, str(exc))
         sys.exit(1)
+
+    # ── ROAS anomaly detection ──────────────────────────────────────────────
+    detect_kpi_anomaly(supabase, metric_name="roas", dry_run=dry_run)
 
     # ── keywords ───────────────────────────────────────────────────────────
     kw_run_id = None
