@@ -1,114 +1,48 @@
 "use client";
 import { useEffect, useState, useMemo } from "react";
-import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, Legend, ResponsiveContainer,
-} from "recharts";
 import { createClient } from "@/utils/supabase/client";
 import Link from "next/link";
 import {
-  LayoutGrid, Radio, Settings, TrendingUp, TrendingDown,
-  DollarSign, Repeat2, Loader2, AlertCircle, CalendarDays,
-  Search, Tag, Megaphone, Hash, ChevronRight, ShieldCheck, Lightbulb, Building2, Activity,
-  Database,
+  LayoutGrid, Radio, Settings,
+  Loader2, Search, Tag, Megaphone, Hash, ChevronRight,
+  ShieldCheck, Lightbulb, Building2, Activity, Database,
 } from "lucide-react";
 import { GrowthIntelligenceView } from "@/components/GrowthIntelligenceView";
-import { DataQualityView } from "@/components/DataQualityView";
-import { InsightsView } from "@/components/InsightsView";
-import { DEFAULT_WORKSPACE } from "@/lib/workspace";
+import { DataQualityView }        from "@/components/DataQualityView";
+import { InsightsView }           from "@/components/InsightsView";
+import { ExecutiveBoardView }     from "@/components/ExecutiveBoardView";
+import { DEFAULT_WORKSPACE }      from "@/lib/workspace";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
-type Period  = 7 | 15 | 30;
-type NavItem = "geral" | "growth" | "campanhas" | "keywords" | "qualidade" | "insights" | "canais" | "configuracoes";
+type NavItem =
+  | "geral" | "growth" | "campanhas" | "keywords"
+  | "qualidade" | "insights" | "canais" | "configuracoes";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface KpiRow {
-  date: string;
-  metric_name: string;
-  metric_value: number;
-  channel: string;
-}
-
 interface CampaignRow {
-  campaign_id: string;
-  campaign_name: string;
-  cost: number;
-  conversions: number;
-  roas: number;
+  campaign_id:      string;
+  campaign_name:    string;
+  cost:             number;
+  conversions:      number;
+  roas:             number;
   date_range_start: string;
 }
 
 interface KeywordRow {
-  keyword: string;
+  keyword:       string;
   campaign_name: string;
-  match_type: string;
-  clicks: number;
-  cost: number;
-  conversions: number;
-}
-
-interface ChartPoint {
-  date: string;
-  total_cost: number;
-  roas: number;
-}
-
-interface Summary {
-  total_cost: number;
-  roas: number;
-  conversions: number;
-  costDelta: number;
-  roasDelta: number;
+  match_type:    string;
+  clicks:        number;
+  cost:          number;
+  conversions:   number;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function sinceDate(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return d.toISOString().split("T")[0];
-}
-
 function formatBRL(value: number): string {
   return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
-}
-
-function formatDate(iso: string): string {
-  const [, m, d] = iso.split("-");
-  return `${d}/${m}`;
-}
-
-function pivotToChart(rows: KpiRow[]): ChartPoint[] {
-  const map: Record<string, ChartPoint> = {};
-  for (const row of rows) {
-    if (!map[row.date]) map[row.date] = { date: row.date, total_cost: 0, roas: 0 };
-    if (row.metric_name === "total_cost") map[row.date].total_cost = row.metric_value;
-    if (row.metric_name === "roas")       map[row.date].roas       = row.metric_value;
-  }
-  return Object.values(map).sort((a, b) => a.date.localeCompare(b.date));
-}
-
-function buildSummary(rows: KpiRow[]): Summary {
-  const costs  = rows.filter((r) => r.metric_name === "total_cost").map((r) => r.metric_value);
-  const roases = rows.filter((r) => r.metric_name === "roas").map((r) => r.metric_value);
-  const convs  = rows.filter((r) => r.metric_name === "conversions").map((r) => r.metric_value);
-
-  const total_cost  = costs.reduce((s, v) => s + v, 0);
-  const roas        = roases.length ? roases.reduce((s, v) => s + v, 0) / roases.length : 0;
-  const conversions = convs.reduce((s, v) => s + v, 0);
-
-  const half  = Math.floor(costs.length / 2);
-  const first = costs.slice(0, half).reduce((s, v) => s + v, 0);
-  const last  = costs.slice(half).reduce((s, v) => s + v, 0);
-  const costDelta = first > 0 ? ((last - first) / first) * 100 : 0;
-
-  const firstR = roases.slice(0, half).reduce((s, v) => s + v, 0) / (half || 1);
-  const lastR  = roases.slice(half).reduce((s, v) => s + v, 0) / (roases.length - half || 1);
-  const roasDelta = firstR > 0 ? ((lastR - firstR) / firstR) * 100 : 0;
-
-  return { total_cost, roas, conversions, costDelta, roasDelta };
 }
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
@@ -160,8 +94,7 @@ function DashSidebar({ active, onNavigate }: { active: NavItem; onNavigate: (n: 
       </div>
 
       <nav className="flex-1 p-3 space-y-0.5">
-        {/* Geral */}
-        <NavBtn id="geral"  label="Geral"              icon={LayoutGrid} active={active} onNavigate={onNavigate} />
+        <NavBtn id="geral"  label="Painel Executivo"  icon={LayoutGrid} active={active} onNavigate={onNavigate} />
         <NavBtn id="growth" label="Growth Intelligence" icon={Activity}   active={active} onNavigate={onNavigate} />
 
         {/* Campanhas group */}
@@ -185,7 +118,6 @@ function DashSidebar({ active, onNavigate }: { active: NavItem; onNavigate: (n: 
             />
           </button>
 
-          {/* Sub-items — always visible when group is expanded */}
           <div
             className={`overflow-hidden transition-all duration-200
               ${inCampanhasGroup ? "max-h-24 opacity-100 mt-0.5" : "max-h-0 opacity-0"}`}
@@ -200,7 +132,6 @@ function DashSidebar({ active, onNavigate }: { active: NavItem; onNavigate: (n: 
         {/* Divider */}
         <div className="h-px bg-zinc-800/60 my-1.5 mx-1" />
 
-        {/* Bottom items */}
         <NavBtn id="qualidade"     label="Qualidade"     icon={ShieldCheck} active={active} onNavigate={onNavigate} />
         <NavBtn id="insights"      label="Insights"      icon={Lightbulb}   active={active} onNavigate={onNavigate} />
         <Link
@@ -232,38 +163,6 @@ function DashSidebar({ active, onNavigate }: { active: NavItem; onNavigate: (n: 
 
 // ─── Shared small components ──────────────────────────────────────────────────
 
-interface MetricProps {
-  label: string; value: string; delta: number;
-  icon: React.ElementType; loading: boolean;
-}
-
-function MetricCard({ label, value, delta, icon: Icon, loading }: MetricProps) {
-  const up = delta >= 0;
-  return (
-    <div className="bg-[#0f1117] border border-zinc-800/60 rounded-xl p-5">
-      <div className="flex items-center justify-between mb-3">
-        <p className="text-xs font-medium text-zinc-500 uppercase tracking-wider">{label}</p>
-        <div className="w-7 h-7 rounded-lg bg-indigo-600/10 border border-indigo-500/15 flex items-center justify-center">
-          <Icon size={13} className="text-indigo-400" />
-        </div>
-      </div>
-      {loading ? (
-        <div className="h-8 flex items-center">
-          <Loader2 size={18} className="animate-spin text-zinc-700" />
-        </div>
-      ) : (
-        <>
-          <p className="text-2xl font-bold text-white mb-1">{value}</p>
-          <div className={`flex items-center gap-1 text-[11px] font-medium ${up ? "text-emerald-400" : "text-red-400"}`}>
-            {up ? <TrendingUp size={11} /> : <TrendingDown size={11} />}
-            {up ? "+" : ""}{delta.toFixed(1)}% vs. período anterior
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
 function roasBadge(roas: number) {
   if (roas >= 3.0) return { label: `${roas.toFixed(2)}x`, color: "#10b981", className: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" };
   if (roas >= 1.5) return { label: `${roas.toFixed(2)}x`, color: "#f59e0b", className: "bg-amber-500/15  text-amber-400  border-amber-500/30"  };
@@ -271,8 +170,8 @@ function roasBadge(roas: number) {
 }
 
 const MATCH_TYPE_CONFIG: Record<string, { label: string; className: string }> = {
-  BROAD:  { label: "Broad",  className: "bg-sky-500/15    text-sky-400    border-sky-500/30"    },
-  PHRASE: { label: "Phrase", className: "bg-amber-500/15  text-amber-400  border-amber-500/30"  },
+  BROAD:  { label: "Broad",  className: "bg-sky-500/15     text-sky-400     border-sky-500/30"     },
+  PHRASE: { label: "Phrase", className: "bg-amber-500/15   text-amber-400   border-amber-500/30"   },
   EXACT:  { label: "Exact",  className: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" },
 };
 
@@ -286,132 +185,6 @@ function MatchTypeBadge({ type }: { type: string }) {
       <Tag size={9} />
       {cfg.label}
     </span>
-  );
-}
-
-const CustomTooltip = ({ active, payload, label }: {
-  active?: boolean;
-  payload?: { color: string; name: string; value: number }[];
-  label?: string;
-}) => {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-3 shadow-xl text-xs">
-      <p className="text-zinc-400 mb-2 font-mono">{label}</p>
-      {payload.map((p) => (
-        <div key={p.name} className="flex items-center gap-2 mb-1">
-          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: p.color }} />
-          <span className="text-zinc-300 capitalize">{p.name}:</span>
-          <span className="font-semibold text-white">
-            {p.name === "total_cost" ? formatBRL(p.value) : p.value.toFixed(2) + "x"}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-};
-
-// ─── View: Geral ──────────────────────────────────────────────────────────────
-
-function GeralView({
-  loading, error, chart, summary, period, setPeriod,
-}: {
-  loading: boolean;
-  error: string | null;
-  chart: ChartPoint[];
-  summary: Summary;
-  period: Period;
-  setPeriod: (p: Period) => void;
-}) {
-  const PERIODS: Period[] = [7, 15, 30];
-
-  return (
-    <>
-      {/* Period selector */}
-      <div className="flex items-center justify-end mb-6">
-        <div className="flex items-center gap-1.5 bg-zinc-900 border border-zinc-800 rounded-xl p-1">
-          <CalendarDays size={13} className="text-zinc-600 ml-1.5" />
-          {PERIODS.map((p) => (
-            <button
-              key={p}
-              onClick={() => setPeriod(p)}
-              className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all
-                ${period === p ? "bg-indigo-600 text-white shadow-sm" : "text-zinc-500 hover:text-zinc-200"}`}
-            >
-              {p}d
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Error banner */}
-      {error && (
-        <div className="flex items-center gap-2.5 bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3 mb-5 text-sm text-red-400">
-          <AlertCircle size={15} className="flex-shrink-0" />
-          <span>Erro ao carregar dados: <span className="font-mono text-xs">{error}</span></span>
-        </div>
-      )}
-
-      {/* Metric cards */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
-        <MetricCard label="Investimento Total" value={loading ? "—" : formatBRL(summary.total_cost)} delta={summary.costDelta} icon={DollarSign} loading={loading} />
-        <MetricCard label="Conversões"         value={loading ? "—" : summary.conversions.toFixed(0)} delta={0}              icon={Repeat2}    loading={loading} />
-        <MetricCard label="ROAS Médio"         value={loading ? "—" : summary.roas.toFixed(2) + "x"}  delta={summary.roasDelta} icon={TrendingUp} loading={loading} />
-      </div>
-
-      {/* Chart */}
-      <div className="bg-[#0f1117] border border-zinc-800/60 rounded-xl p-5">
-        <div className="flex items-center justify-between mb-5">
-          <div>
-            <p className="text-sm font-semibold text-white">Performance · Custo vs. ROAS</p>
-            <p className="text-[11px] text-zinc-600 mt-0.5 font-mono">últimos {period} dias · Google Ads</p>
-          </div>
-          {loading && <Loader2 size={15} className="animate-spin text-zinc-600" />}
-        </div>
-
-        {!loading && chart.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-48 text-zinc-700">
-            <p className="text-sm">Sem dados para o período selecionado.</p>
-            <p className="text-xs mt-1">Verifique o DEFAULT_WORKSPACE.id e execute o script de sync.</p>
-          </div>
-        ) : (
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={chart} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-              <XAxis dataKey="date" tickFormatter={formatDate} tick={{ fill: "#71717a", fontSize: 11, fontFamily: "monospace" }} axisLine={{ stroke: "#27272a" }} tickLine={false} />
-              <YAxis yAxisId="cost" orientation="left"  tickFormatter={(v) => `R$${(v / 1000).toFixed(0)}k`} tick={{ fill: "#71717a", fontSize: 11 }} axisLine={false} tickLine={false} width={52} />
-              <YAxis yAxisId="roas" orientation="right" tickFormatter={(v) => `${v.toFixed(1)}x`}             tick={{ fill: "#71717a", fontSize: 11 }} axisLine={false} tickLine={false} width={44} />
-              <Tooltip content={<CustomTooltip />} />
-              <Legend wrapperStyle={{ fontSize: 11, color: "#71717a", paddingTop: 16 }} formatter={(v) => v === "total_cost" ? "Custo" : "ROAS"} />
-              <Line yAxisId="cost" type="monotone" dataKey="total_cost" stroke="#6366f1" strokeWidth={2} dot={false} activeDot={{ r: 4, strokeWidth: 0 }} />
-              <Line yAxisId="roas" type="monotone" dataKey="roas"       stroke="#10b981" strokeWidth={2} dot={false} activeDot={{ r: 4, strokeWidth: 0 }} />
-            </LineChart>
-          </ResponsiveContainer>
-        )}
-      </div>
-
-      {/* Sync status shortcut */}
-      <div className="mt-4 bg-[#0f1117] border border-zinc-800/60 rounded-xl p-4 flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-8 h-8 rounded-lg bg-indigo-600/10 border border-indigo-500/15 flex items-center justify-center flex-shrink-0">
-            <Database size={14} className="text-indigo-400" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-zinc-200">Sincronização dos dados</p>
-            <p className="text-[11px] text-zinc-500 mt-0.5">
-              Veja a última execução, fontes sincronizadas e falhas recentes.
-            </p>
-          </div>
-        </div>
-        <Link
-          href="/logs"
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold text-indigo-300 bg-indigo-600/10 border border-indigo-500/20 hover:bg-indigo-600/20 transition-colors whitespace-nowrap flex-shrink-0"
-        >
-          Ver logs
-          <ChevronRight size={12} />
-        </Link>
-      </div>
-    </>
   );
 }
 
@@ -468,7 +241,6 @@ function CampanhasView({ campaigns, loading }: { campaigns: CampaignRow[]; loadi
 
   return (
     <>
-      {/* Summary strip */}
       <div className="grid grid-cols-3 gap-4 mb-6">
         <div className="bg-[#0f1117] border border-zinc-800/60 rounded-xl p-5">
           <p className="text-[10px] font-medium text-zinc-600 uppercase tracking-wider mb-2">Total Investido</p>
@@ -494,7 +266,6 @@ function CampanhasView({ campaigns, loading }: { campaigns: CampaignRow[]; loadi
         </div>
       </div>
 
-      {/* Cards grid */}
       <div className="bg-[#0d0d10] border border-zinc-800/60 rounded-xl p-5">
         <div className="flex items-center justify-between mb-4">
           <div>
@@ -525,7 +296,7 @@ function CampanhasView({ campaigns, loading }: { campaigns: CampaignRow[]; loadi
 // ─── View: Palavras-chave ─────────────────────────────────────────────────────
 
 function KeywordsView({ keywords, loading }: { keywords: KeywordRow[]; loading: boolean }) {
-  const [search, setSearch] = useState("");
+  const [search, setSearch]           = useState("");
   const [matchFilter, setMatchFilter] = useState<string>("all");
 
   const filtered = useMemo(() => {
@@ -536,12 +307,12 @@ function KeywordsView({ keywords, loading }: { keywords: KeywordRow[]; loading: 
     return list;
   }, [keywords, search, matchFilter]);
 
-  const totalCost = filtered.reduce((s, k) => s + k.cost, 0);
-  const totalConv = filtered.reduce((s, k) => s + k.conversions, 0);
+  const totalCost   = filtered.reduce((s, k) => s + k.cost, 0);
+  const totalConv   = filtered.reduce((s, k) => s + k.conversions, 0);
   const totalClicks = filtered.reduce((s, k) => s + k.clicks, 0);
 
   const MATCH_OPTIONS = [
-    { value: "all",    label: "Todos" },
+    { value: "all",    label: "Todos"  },
     { value: "BROAD",  label: "Broad"  },
     { value: "PHRASE", label: "Phrase" },
     { value: "EXACT",  label: "Exact"  },
@@ -549,7 +320,6 @@ function KeywordsView({ keywords, loading }: { keywords: KeywordRow[]; loading: 
 
   return (
     <>
-      {/* Summary strip */}
       <div className="grid grid-cols-3 gap-4 mb-6">
         <div className="bg-[#0f1117] border border-zinc-800/60 rounded-xl p-5">
           <p className="text-[10px] font-medium text-zinc-600 uppercase tracking-wider mb-2">Custo Total</p>
@@ -571,11 +341,8 @@ function KeywordsView({ keywords, loading }: { keywords: KeywordRow[]; loading: 
         </div>
       </div>
 
-      {/* Table card */}
       <div className="bg-[#0d0d10] border border-zinc-800/60 rounded-xl overflow-hidden">
-        {/* Toolbar */}
         <div className="flex items-center gap-3 p-4 border-b border-zinc-800/60">
-          {/* Search */}
           <div className="relative flex-1 max-w-xs">
             <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-600 pointer-events-none" />
             <input
@@ -592,7 +359,6 @@ function KeywordsView({ keywords, loading }: { keywords: KeywordRow[]; loading: 
             )}
           </div>
 
-          {/* Match type filter */}
           <div className="flex items-center gap-1 bg-zinc-900 border border-zinc-800 rounded-xl p-1">
             {MATCH_OPTIONS.map(({ value, label }) => (
               <button
@@ -609,7 +375,6 @@ function KeywordsView({ keywords, loading }: { keywords: KeywordRow[]; loading: 
           {loading && <Loader2 size={14} className="animate-spin text-zinc-600" />}
         </div>
 
-        {/* Table */}
         {loading ? (
           <div className="flex items-center justify-center h-48">
             <Loader2 size={22} className="animate-spin text-zinc-700" />
@@ -666,7 +431,6 @@ function KeywordsView({ keywords, loading }: { keywords: KeywordRow[]; loading: 
           </div>
         )}
 
-        {/* Footer */}
         {!loading && filtered.length > 0 && (
           <div className="border-t border-zinc-800/40 px-4 py-2.5 flex items-center justify-between">
             <p className="text-[10px] text-zinc-700 font-mono">{filtered.length} de {keywords.length} keywords</p>
@@ -683,14 +447,14 @@ function KeywordsView({ keywords, loading }: { keywords: KeywordRow[]; loading: 
 // ─── Header config per nav ────────────────────────────────────────────────────
 
 const NAV_META: Record<NavItem, { title: string; subtitle: string }> = {
-  geral:         { title: "Visão Geral",        subtitle: "Google Ads · kpi_cache_daily"                 },
-  growth:        { title: "Growth Intelligence", subtitle: "GA4 · Funil · Governança · Woke People"      },
-  campanhas:     { title: "Campanhas",           subtitle: "campaign_summary · últimos 30 dias"           },
-  keywords:      { title: "Palavras-chave",      subtitle: "keyword_analysis · últimos 30 dias"           },
-  qualidade:     { title: "Qualidade dos Dados", subtitle: "data_quality_report · A-Data checks"          },
-  insights:      { title: "Insights",            subtitle: "insight_feed · A-Insights v1 determinístico"  },
-  canais:        { title: "Canais",              subtitle: "Integrações e conectores ativos"              },
-  configuracoes: { title: "Configurações",       subtitle: "Preferências do workspace"                    },
+  geral:         { title: "Painel Executivo",    subtitle: "síntese operacional · determinístico"             },
+  growth:        { title: "Growth Intelligence", subtitle: "GA4 · Funil · Governança · Woke People"          },
+  campanhas:     { title: "Campanhas",           subtitle: "campaign_summary · últimos 30 dias"               },
+  keywords:      { title: "Palavras-chave",      subtitle: "keyword_analysis · últimos 30 dias"               },
+  qualidade:     { title: "Qualidade dos Dados", subtitle: "data_quality_report · A-Data checks"              },
+  insights:      { title: "Insights",            subtitle: "insight_feed · A-Insights v1 determinístico"      },
+  canais:        { title: "Canais",              subtitle: "Integrações e conectores ativos"                  },
+  configuracoes: { title: "Configurações",       subtitle: "Preferências do workspace"                        },
 };
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -698,33 +462,13 @@ const NAV_META: Record<NavItem, { title: string; subtitle: string }> = {
 export default function DashboardPage() {
   const supabase = createClient();
 
-  const [nav, setNav]         = useState<NavItem>("geral");
-  const [period, setPeriod]   = useState<Period>(7);
-  const [rows, setRows]       = useState<KpiRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState<string | null>(null);
+  const [nav, setNav] = useState<NavItem>("geral");
 
   const [campaigns, setCampaigns]               = useState<CampaignRow[]>([]);
   const [campaignsLoading, setCampaignsLoading] = useState(true);
 
   const [keywords, setKeywords]               = useState<KeywordRow[]>([]);
   const [keywordsLoading, setKeywordsLoading] = useState(true);
-
-  useEffect(() => {
-    async function fetchData() {
-      setLoading(true); setError(null);
-      const { data, error: sbError } = await supabase
-        .from("kpi_cache_daily")
-        .select("date, metric_name, metric_value, channel")
-        .eq("workspace_id", DEFAULT_WORKSPACE.id)
-        .gte("date", sinceDate(period))
-        .order("date", { ascending: true });
-      if (sbError) { setError(sbError.message); setLoading(false); return; }
-      setRows((data as KpiRow[]) ?? []);
-      setLoading(false);
-    }
-    fetchData();
-  }, [period]);
 
   useEffect(() => {
     async function fetchCampaigns() {
@@ -754,18 +498,11 @@ export default function DashboardPage() {
     fetchKeywords();
   }, []);
 
-  const chart   = useMemo(() => pivotToChart(rows), [rows]);
-  const summary = useMemo(() => buildSummary(rows), [rows]);
-  const meta    = NAV_META[nav];
-
-  function handleNavigate(n: NavItem) {
-    setNav(n);
-    // Opening parent "Campanhas" defaults to campaigns view
-  }
+  const meta = NAV_META[nav];
 
   return (
     <div className="flex h-screen bg-[#09090b] text-slate-200 overflow-hidden font-sans">
-      <DashSidebar active={nav} onNavigate={handleNavigate} />
+      <DashSidebar active={nav} onNavigate={setNav} />
 
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
@@ -782,30 +519,12 @@ export default function DashboardPage() {
 
         {/* Body */}
         <main className="flex-1 overflow-y-auto p-6">
-          {nav === "geral" && (
-            <GeralView
-              loading={loading}
-              error={error}
-              chart={chart}
-              summary={summary}
-              period={period}
-              setPeriod={setPeriod}
-            />
-          )}
-
-          {nav === "growth" && <GrowthIntelligenceView />}
-
-          {nav === "campanhas" && (
-            <CampanhasView campaigns={campaigns} loading={campaignsLoading} />
-          )}
-
-          {nav === "keywords" && (
-            <KeywordsView keywords={keywords} loading={keywordsLoading} />
-          )}
-
-          {nav === "qualidade" && <DataQualityView />}
-
-          {nav === "insights" && <InsightsView />}
+          {nav === "geral"      && <ExecutiveBoardView />}
+          {nav === "growth"     && <GrowthIntelligenceView />}
+          {nav === "campanhas"  && <CampanhasView campaigns={campaigns} loading={campaignsLoading} />}
+          {nav === "keywords"   && <KeywordsView  keywords={keywords}   loading={keywordsLoading} />}
+          {nav === "qualidade"  && <DataQualityView />}
+          {nav === "insights"   && <InsightsView />}
 
           {(nav === "canais" || nav === "configuracoes") && (
             <div className="flex flex-col items-center justify-center h-64 text-zinc-700">
