@@ -95,6 +95,15 @@ Google Ads                              GA4 (analytics_289891960)
                                        → Dashboard Next.js
 ```
 
+### Multi-tenancy & Scalability (v1.x Core)
+
+| Dimensão | Implementação |
+|---|---|
+| **Status** | Infraestrutura nativa via Row Level Security (RLS) no Supabase |
+| **Isolamento** | Todos os motores (Sync, Anomaly Detection, Insights, Governance) são orientados a `workspace_id` — nenhuma query opera sem filtro de tenant |
+| **Estratégia v1.x** | Multi-tenancy assistido: novos tenants são adicionados via configuração de backend/admin, sem interface de self-onboarding — mantém rigor de governança semântica sem complexidade prematura de UI |
+| **Escala** | Adicionar um novo workspace requer: registro na tabela `workspaces`, YAML de measurement config, e configuração de variáveis de ambiente no pipeline — sem alteração de código |
+
 ---
 
 ## 3. Frontend — Next.js 16
