@@ -1941,3 +1941,53 @@ Correções aplicadas:
 ### Commits técnicos
 
 `29b3bb0 feat: add operational momentum visualization (v1.7.4)`
+`de9019a feat: add cost line, timeline markers and period selector to pulse`
+
+---
+
+## v1.7.4b — Pulse Enrichment: Cost Line, Timeline Markers, Period Selector
+
+### Contexto
+
+Extensões incrementais ao `MomentumChart` introduzido na v1.7.4, implementadas na mesma sessão após validação visual do dashboard em produção local.
+
+### 1. Linha de custo (spend)
+
+O `ChartPoint.spend` já existia desde a v1.7.3 mas não era visualizado. Adicionado como `<Line>` secundário com eixo Y independente:
+
+- **Dual YAxis ocultos**: `yAxisId="roas"` (esquerdo) e `yAxisId="spend"` (direito), ambos `hide`. As duas séries usam 100% da altura de 72px sem conflito de escala.
+- **Estilo**: zinc-600 `#52525b`, `strokeWidth={1}`, sem fill — hierarquia visual clara (custo = contexto, ROAS = sinal primário).
+- **Tooltip**: formatter por `name` mostra ROAS com delta e Custo em BRL compact na mesma interação.
+
+### 2. Marcadores de timeline operacional
+
+Linhas verticais tracejadas no chart correlacionando eventos da Timeline Operacional com a curva de ROAS:
+
+| Tipo | Cor | Letra | Fonte do timestamp |
+|---|---|---|---|
+| Sync | zinc-600 `#52525b` | S | `syncRuns[0].finished_at` |
+| Governance | amber-700 `#b45309` | G | `dqChecks[0].checked_at` |
+| Insight | indigo-500 `#6366f1` | I | `insights[0].date_range_start` |
+
+Regras: só renderiza se a data existir em `periodData` (dias com custo > 0). Datas duplicadas são deduplicadas por `seen: Set<string>` — nunca sobrepõe duas linhas no mesmo dia.
+
+### 3. Seletor de período (7d / 15d / 30d)
+
+Três botões compactos no header do Pulse substituem o label estático `"últimos 30d"`. Implementação puramente client-side — zero nova query Supabase:
+
+```typescript
+const periodData = useMemo(() => chartData.slice(-selectedPeriod), [chartData, selectedPeriod]);
+```
+
+Todos os valores derivados do Pulse reagem ao período selecionado:
+
+| Derivado | Comportamento por período |
+|---|---|
+| `periodData` | `chartData.slice(-N)` |
+| `avgRoas` | média ROAS do período |
+| `totalSpend` | soma custo do período |
+| `trendDelta` | `Math.floor(valid.length / 2)` como janela dinâmica |
+| `isAnomaly` | desvio do último ponto vs média do período |
+| `chartMarkers` | filtra por datas dentro de `periodData` |
+
+Janela de comparação do `trendDelta` é proporcional ao período: 7d → 3d vs 3d; 15d → 7d vs 7d; 30d → 15d vs 15d.
