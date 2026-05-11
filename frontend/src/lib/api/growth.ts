@@ -54,7 +54,10 @@ export async function getGrowthOverview(
     .eq("workspace_id", workspaceId)
     .order("updated_at", { ascending: false })
     .limit(1);
-  ga4Query = applyDateFilters(ga4Query, filters);
+  // Snapshot coverage: include rows whose period overlaps the requested range.
+  // gte(date_range_start) would wrongly exclude snapshots that started before the window.
+  if (filters.date_start) ga4Query = ga4Query.gte("date_range_end",   filters.date_start);
+  if (filters.date_end)   ga4Query = ga4Query.lte("date_range_start", filters.date_end);
   if (isSimpleFilterValue(filters.source)) {
     ga4Query = ga4Query.eq("source_platform", filters.source);
   }
@@ -238,7 +241,9 @@ async function readGa4Summaries(workspaceId: string, filters: ApiQueryFilters) {
     .order("updated_at", { ascending: false })
     .limit(filters.limit);
 
-  query = applyDateFilters(query, filters);
+  // Snapshot coverage: same logic as getGrowthOverview.
+  if (filters.date_start) query = query.gte("date_range_end",   filters.date_start);
+  if (filters.date_end)   query = query.lte("date_range_start", filters.date_end);
   if (isSimpleFilterValue(filters.source)) {
     query = query.eq("source_platform", filters.source);
   }
