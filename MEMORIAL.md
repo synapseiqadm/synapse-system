@@ -1429,3 +1429,94 @@ Pipeline Python, GitHub Actions, Supabase, migrations, RLS, lógica de sync — 
 ### Commit técnico
 
 `3fa012f chore: improve navigation and agents preview clarity`
+
+---
+
+## v1.6 — Semantic Funnel Intelligence
+
+### Objetivo
+Adicionar a primeira camada de interpretação semântica de growth ao dashboard, utilizando exclusivamente dados já existentes no ecossistema SynapseIQ sem introduzir IA generativa, embeddings ou novos pipelines complexos.
+
+### Implementações
+
+#### Semantic Funnel Intelligence
+Criação da camada `computeFunnelIntelligence` para derivar sinais semânticos diretamente dos snapshots GA4 já sincronizados.
+
+Métricas derivadas:
+- taxa de intenção;
+- taxa de conversão;
+- intenção → conversão;
+- maior queda do funil;
+- cobertura semântica;
+- share de eventos suspeitos.
+
+#### Progressão de Funil
+Novo bloco visual de progressão:
+- Aquisição;
+- Landing;
+- Engajamento;
+- Intenção;
+- Conversão.
+
+Com barras semânticas:
+- eventos semanticamente válidos;
+- eventos suspeitos detectados pelo governance.
+
+#### Integração Governance → Growth
+A camada de Semantic Governance passou a enriquecer o dashboard de Growth Intelligence.
+
+Eventos suspeitos identificados:
+- `Analytics`
+- `LinkedIn`
+
+passam agora a impactar:
+- cobertura semântica;
+- qualidade do engajamento;
+- leitura executiva do funil.
+
+#### Executive Intelligence
+Os cards executivos do Growth Intelligence passaram a exibir:
+- % de sessões com intenção;
+- % de eventos suspeitos;
+- contexto semântico resumido.
+
+#### UX
+A implementação manteve:
+- visual enterprise;
+- baixo ruído visual;
+- dark mode;
+- compatibilidade com a navegação unificada introduzida na v1.4.4.1c.
+
+### Arquivos principais
+
+Novo:
+- `frontend/src/lib/funnel.ts`
+
+Alterado:
+- `frontend/src/components/GrowthIntelligenceView.tsx`
+
+### Impacto arquitetural
+Nenhuma alteração em:
+- pipelines;
+- GitHub Actions;
+- cron;
+- Supabase auth;
+- RLS;
+- migrations;
+- backend governance.
+
+Toda a inteligência da v1.6 é derivada em frontend via heurísticas determinísticas reutilizando datasets já existentes.
+
+### Resultado
+A plataforma passou a interpretar:
+- progressão de funil;
+- qualidade semântica do tracking;
+- sinais de intenção;
+- degradação de conversão;
+- confiabilidade dos eventos.
+
+A SynapseIQ deixa de atuar apenas como dashboard operacional e passa a se posicionar como uma plataforma de Growth Intelligence semântico.
+
+### Commits técnicos
+
+`822c821 feat: add semantic funnel intelligence layer (v1.6)`
