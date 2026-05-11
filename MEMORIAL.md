@@ -2201,3 +2201,48 @@ Detecção (GTM/pipeline) → Proposição Semântica (Synapse) → Aprovação 
 - Infraestrutura de versionamento de classificações (`classification_version` em `kpi_cache_daily`)
 - Exploração 1 (GTM) como camada de entrada do workflow
 
+---
+
+## Gestão de Riscos e Débitos Técnicos
+
+Registro dos riscos identificados e débitos técnicos conscientes acumulados até a v1.8. Cada item possui owner implícito (sistema ou humano) e critério de resolução.
+
+### Risco 1 — Refinamento de Anomalias (Prioridade: Alta)
+
+**Descrição:** A lógica de detecção de anomalias de ROAS (`detect_kpi_anomaly`) usa um limiar fixo de ±30% sobre a média dos últimos 30 dias. Em períodos de baixo volume de spend (ex: campanhas pausadas, fim de mês com orçamento esgotado), pequenas variações absolutas de ROAS podem cruzar o limiar e gerar alertas falso-positivos.
+
+**Impacto:** Erosão de confiança no sistema de alertas se anomalias sem significância operacional forem sinalizadas repetidamente.
+
+**Mitigação planejada (v1.9):**
+- Adicionar filtro de volume mínimo: só disparar anomalia se `spend` do período ≥ threshold configurável
+- Considerar desvio padrão em vez de média fixa para contextos de alta sazonalidade
+- Permitir configuração de `threshold` e `lookback_days` por workspace via tabela de configuração
+
+---
+
+### Risco 2 — Validação Multi-tenant (Prioridade: Alta)
+
+**Descrição:** A arquitetura multi-tenant foi projetada com `workspace_id` como chave de isolamento, mas todo o pipeline atual opera exclusivamente sobre o workspace Woke People. Dependências implícitas (hardcoded UUIDs, `WOKE_WORKSPACE_ID` em `config.py`, políticas RLS com UUID literal) podem mascarar vazamentos de isolamento.
+
+**Impacto:** Ao onboarding do segundo tenant, dados de workspaces distintos podem se misturar silenciosamente se algum query omitir o filtro de `workspace_id`.
+
+**Mitigação planejada (pré-lançamento multi-tenant):**
+- Criar "Tenant B" em ambiente de staging com dados sintéticos
+- Executar pipeline completo com ambos os tenants ativos simultaneamente
+- Auditar todas as queries Supabase em `backend/connectors/` para garantir presença explícita de `.eq("workspace_id", ...)`
+- Migrar políticas RLS de UUID literal para função parametrizada (`current_setting('app.workspace_id')` ou equivalente)
+
+---
+
+### Débito 3 — Auth Integration (Marco Pré-requisito)
+
+**Descrição:** O sistema opera em estado MVP sem autenticação real. O `workspace_id` da Woke People está hardcoded em `config.py` e exposto via variável de ambiente `WOKE_WORKSPACE_ID`. Não há papéis de usuário, sessões, ou auditoria de acesso.
+
+**Impacto:**
+- Bloqueia features colaborativas (aprovação humana de classificações, UI de curadoria)
+- Impede rastreabilidade de `actor` em `operational_events` (hoje sempre `"system"`)
+- Inviabiliza onboarding self-service de novos tenants
+
+**Critério de resolução:** Integração do Supabase Auth com RLS por `auth.uid()` e mapeamento de usuários a workspaces via tabela `workspace_members`. Este marco é pré-requisito para as Explorações 1 e 2 da seção v2.x e para o ciclo de aprovação do Actionable Reports Engine (v1.9).
+
+**Dependências:** Nenhuma decisão de schema deve fechar esta porta — `operational_events.actor` já é `TEXT` (extensível para UUID de usuário), `workspace_members` pode ser adicionada sem breaking changes.
