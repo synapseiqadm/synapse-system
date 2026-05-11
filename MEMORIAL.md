@@ -2147,6 +2147,7 @@ Capacidades previstas:
 - **Insight Diff:** comparação do insight atual com o estado anterior (base em `get_previous_insight_state()` já implementada em `insights.py`).
 - **Causal Narrative:** dada uma variação de ROAS, listar eventos operacionais contemporâneos como candidatos causais.
 - **Anomaly Resolution:** marcar anomalias como `resolved` quando o KPI retorna ao intervalo normal, fechando o ciclo de observabilidade.
+- **Actionable Reports & To-Do Engine:** gerar relatórios semanais (ou por período customizado) que traduzam anomalias e insights em listas de tarefas executáveis — com instruções claras para ação manual (ex: pausar campanha sem conversão, corrigir tag de evento) e ciclo de status `Identificado → Em Execução → Resolvido`. Serve como ponte entre a inteligência diagnóstica atual e futuras automações via agentes.
 
 ---
 
