@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState, useMemo } from "react";
 import {
-  AreaChart, Area, XAxis, Tooltip, ResponsiveContainer, ReferenceDot,
+  AreaChart, Area, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceDot, ReferenceLine,
 } from "recharts";
 import {
   Loader2, CheckCircle2, ShieldCheck, Activity, Database,
@@ -33,8 +33,11 @@ interface DQCheck {
   checked_at: string;
 }
 
-interface KpiRow    { date: string; metric_name: string; metric_value: number; }
+interface KpiRow     { date: string; metric_name: string; metric_value: number; }
 interface ChartPoint { date: string; roas: number; spend: number; }
+
+type MarkerType = "sync" | "governance" | "insight";
+interface ChartMarker { date: string; type: MarkerType; }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -178,6 +181,12 @@ const STATUS_STYLE: Record<DomainStatus, { dot: string; text: string; label: str
   "sem dados": { dot: "bg-zinc-600",    text: "text-zinc-500",    label: "Sem dados" },
 };
 
+const MARKER_STYLE: Record<MarkerType, { stroke: string; letter: string }> = {
+  sync:       { stroke: "#52525b", letter: "S" },
+  governance: { stroke: "#b45309", letter: "G" },
+  insight:    { stroke: "#6366f1", letter: "I" },
+};
+
 const URGENCY_BORDER: Record<string, string> = {
   high:   "border-l-amber-500",
   medium: "border-l-zinc-600/60",
@@ -196,10 +205,10 @@ interface MomentumChartProps {
   data: ChartPoint[];
   trendDelta: number;
   isAnomaly: boolean;
-  contextualLabels?: Array<{ pointIndex: number; label: string }>; // future: causal annotations
+  markers?: ChartMarker[];
 }
 
-function MomentumChart({ data, trendDelta, isAnomaly }: MomentumChartProps) {
+function MomentumChart({ data, trendDelta, isAnomaly, markers }: MomentumChartProps) {
   const stroke    = trendDelta >= 0 ? "#10b981" : "#ef4444";
   const deltaFmt  = fmtDelta(trendDelta);
   const lastPoint = data.length > 0 ? data[data.length - 1] : null;
@@ -222,21 +231,39 @@ function MomentumChart({ data, trendDelta, isAnomaly }: MomentumChartProps) {
           </linearGradient>
         </defs>
         <XAxis dataKey="date" tick={false} axisLine={{ stroke: "#27272a" }} tickLine={false} />
+        <YAxis yAxisId="roas"  hide domain={["auto", "auto"]} />
+        <YAxis yAxisId="spend" hide domain={["auto", "auto"]} orientation="right" />
         <Tooltip
           contentStyle={{ background: "#18181b", border: "1px solid #27272a", borderRadius: 6, padding: "3px 8px", fontSize: 10 }}
           itemStyle={{ color: "#a1a1aa", fontSize: 10 }}
           labelStyle={{ color: "#71717a", fontSize: 9 }}
-          formatter={(v) => [
-            `${Number(v).toFixed(2).replace(".", ",")}x  ·  Δ ${deltaFmt}`,
-            "ROAS",
-          ]}
+          formatter={(v, name) => {
+            if (name === "spend") return [fmtBRLCompact(Number(v)), "Custo"];
+            return [`${Number(v).toFixed(2).replace(".", ",")}x  ·  Δ ${deltaFmt}`, "ROAS"];
+          }}
           labelFormatter={(lbl) => {
             const parts = String(lbl).split("-");
             return `${parts[2]}/${parts[1]}`;
           }}
         />
+        {markers?.map((m, i) => (
+          <ReferenceLine
+            key={`${m.type}-${i}`}
+            x={m.date}
+            stroke={MARKER_STYLE[m.type].stroke}
+            strokeWidth={1}
+            strokeDasharray="3 2"
+            label={{
+              value: MARKER_STYLE[m.type].letter,
+              position: "insideTopLeft",
+              fontSize: 7,
+              fill: MARKER_STYLE[m.type].stroke,
+            }}
+          />
+        ))}
         {isAnomaly && lastPoint && (
           <ReferenceDot
+            yAxisId="roas"
             x={lastPoint.date}
             y={lastPoint.roas}
             r={4}
@@ -245,7 +272,17 @@ function MomentumChart({ data, trendDelta, isAnomaly }: MomentumChartProps) {
             strokeWidth={1.5}
           />
         )}
+        <Line
+          yAxisId="spend"
+          type="monotone"
+          dataKey="spend"
+          stroke="#52525b"
+          strokeWidth={1}
+          dot={false}
+          activeDot={{ r: 2, strokeWidth: 0, fill: "#71717a" }}
+        />
         <Area
+          yAxisId="roas"
           type="monotone"
           dataKey="roas"
           stroke={stroke}
@@ -291,8 +328,9 @@ export function ExecutiveBoardView() {
   const [ga4,      setGa4]      = useState<Ga4DecisionInput | null>(null);
   const [dqChecks, setDqChecks] = useState<DQCheck[]>([]);
   const [syncRuns, setSyncRuns] = useState<SyncRun[]>([]);
-  const [kpiRows,  setKpiRows]  = useState<KpiRow[]>([]);
-  const [loading,  setLoading]  = useState(true);
+  const [kpiRows,        setKpiRows]       = useState<KpiRow[]>([]);
+  const [loading,        setLoading]       = useState(true);
+  const [selectedPeriod, setSelectedPeriod] = useState<7 | 15 | 30>(30);
 
   useEffect(() => {
     async function loadAll() {
@@ -355,36 +393,38 @@ export function ExecutiveBoardView() {
   const priorities    = useMemo(() => computeDecisionBrief(insights, ga4), [insights, ga4]);
   const latestDq      = useMemo(() => latestChecksByName(dqChecks), [dqChecks]);
   const latestSyncMap = useMemo(() => latestPerExpectedSource(syncRuns), [syncRuns]);
-  const chartData     = useMemo(() => pivotChart(kpiRows), [kpiRows]);
+  const chartData   = useMemo(() => pivotChart(kpiRows), [kpiRows]);
+  const periodData  = useMemo(() => chartData.slice(-selectedPeriod), [chartData, selectedPeriod]);
 
   const avgRoas = useMemo(() => {
-    const valid = chartData.filter(d => d.roas > 0);
+    const valid = periodData.filter(d => d.roas > 0);
     if (valid.length === 0) return null;
     return valid.reduce((s, d) => s + d.roas, 0) / valid.length;
-  }, [chartData]);
+  }, [periodData]);
 
   const totalSpend = useMemo(() => {
-    const valid = chartData.filter(d => d.spend > 0);
+    const valid = periodData.filter(d => d.spend > 0);
     if (valid.length === 0) return null;
     return valid.reduce((s, d) => s + d.spend, 0);
-  }, [chartData]);
+  }, [periodData]);
 
   const { trendDelta, isAnomaly } = useMemo(() => {
-    const valid = chartData.filter(d => d.roas > 0);
+    const valid = periodData.filter(d => d.roas > 0);
     if (valid.length < 2) return { trendDelta: 0, isAnomaly: false };
-    const avg30   = valid.reduce((s, d) => s + d.roas, 0) / valid.length;
-    const lastRoas = valid[valid.length - 1].roas;
-    const anomaly  = avg30 > 0 && Math.abs(lastRoas - avg30) / avg30 > 0.30;
-    if (valid.length < 8) return { trendDelta: 0, isAnomaly: anomaly };
-    const last7   = valid.slice(-7);
-    const prev7   = valid.slice(-14, -7);
-    const avgLast = last7.reduce((s, d) => s + d.roas, 0) / last7.length;
-    const avgPrev = prev7.length > 0
-      ? prev7.reduce((s, d) => s + d.roas, 0) / prev7.length
+    const avgPeriod = valid.reduce((s, d) => s + d.roas, 0) / valid.length;
+    const lastRoas  = valid[valid.length - 1].roas;
+    const anomaly   = avgPeriod > 0 && Math.abs(lastRoas - avgPeriod) / avgPeriod > 0.30;
+    const half      = Math.max(Math.floor(valid.length / 2), 1);
+    if (valid.length < 4) return { trendDelta: 0, isAnomaly: anomaly };
+    const last    = valid.slice(-half);
+    const prev    = valid.slice(-half * 2, -half);
+    const avgLast = last.reduce((s, d) => s + d.roas, 0) / last.length;
+    const avgPrev = prev.length > 0
+      ? prev.reduce((s, d) => s + d.roas, 0) / prev.length
       : avgLast;
     const delta   = avgPrev > 0 ? ((avgLast - avgPrev) / avgPrev) * 100 : 0;
     return { trendDelta: delta, isAnomaly: anomaly };
-  }, [chartData]);
+  }, [periodData]);
 
   const wasteAmount = useMemo(() =>
     insights
@@ -392,6 +432,28 @@ export function ExecutiveBoardView() {
       .reduce((sum, i) => sum + (typeof i.evidence?.cost === "number" ? i.evidence.cost : 0), 0),
     [insights],
   );
+
+  const chartMarkers = useMemo((): ChartMarker[] => {
+    const periodDates = new Set(periodData.map(d => d.date));
+    const result: ChartMarker[] = [];
+    const seen   = new Set<string>();
+
+    function tryAdd(ts: string | null | undefined, type: MarkerType) {
+      if (!ts) return;
+      const date = ts.split("T")[0];
+      if (periodDates.has(date) && !seen.has(date)) {
+        result.push({ date, type });
+        seen.add(date);
+      }
+    }
+
+    const latestSync = syncRuns[0];
+    tryAdd(latestSync?.finished_at ?? latestSync?.started_at, "sync");
+    tryAdd(dqChecks[0]?.checked_at, "governance");
+    tryAdd(insights.find(i => i.date_range_start)?.date_range_start, "insight");
+
+    return result;
+  }, [periodData, syncRuns, dqChecks, insights]);
 
   const { sessions, convRate, suspShare } = useMemo(() => {
     if (!ga4 || ga4.sessions === 0) {
@@ -501,12 +563,26 @@ export function ExecutiveBoardView() {
           <div className="px-4 py-2.5 border-b border-zinc-800/40 flex items-center justify-between">
             <p className="text-[10px] font-semibold text-zinc-600 uppercase tracking-wider">Performance Pulse</p>
             <div className="flex items-center gap-2">
-              {chartData.length > 1 && (
+              {periodData.length > 1 && (
                 <span className={`text-[10px] font-mono font-semibold ${trendDelta >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                   Δ {fmtDelta(trendDelta)}
                 </span>
               )}
-              <span className="text-[9px] text-zinc-700 font-mono">últimos 30d</span>
+              <div className="flex items-center gap-0.5">
+                {([7, 15, 30] as const).map(p => (
+                  <button
+                    key={p}
+                    onClick={() => setSelectedPeriod(p)}
+                    className={`text-[9px] px-1.5 py-0.5 rounded font-mono transition-colors ${
+                      selectedPeriod === p
+                        ? "bg-zinc-700 text-zinc-300"
+                        : "text-zinc-600 hover:text-zinc-400"
+                    }`}
+                  >
+                    {p}d
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -521,9 +597,10 @@ export function ExecutiveBoardView() {
           {/* Momentum Chart — ROAS trend com delta e anomalia */}
           <div className="px-2 flex-1">
             <MomentumChart
-              data={chartData}
+              data={periodData}
               trendDelta={trendDelta}
               isAnomaly={isAnomaly}
+              markers={chartMarkers}
             />
           </div>
 
