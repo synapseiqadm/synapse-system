@@ -1991,3 +1991,159 @@ Todos os valores derivados do Pulse reagem ao período selecionado:
 | `chartMarkers` | filtra por datas dentro de `periodData` |
 
 Janela de comparação do `trendDelta` é proporcional ao período: 7d → 3d vs 3d; 15d → 7d vs 7d; 30d → 15d vs 15d.
+
+---
+
+## v1.8 — Causal Intelligence Infrastructure ✅ CONCLUÍDA
+
+**Data:** Maio 2026  
+**Objetivo estratégico:** Estabelecer a infraestrutura de Observabilidade Operacional — camada que conecta eventos do pipeline (sincronizações, anomalias de KPI, correções de governança) a movimentos nos indicadores de performance, habilitando análise causal histórica.
+
+### Impacto no produto
+
+Antes da v1.8, o dashboard exibia *o que está acontecendo agora* mas não *por que mudou*. A v1.8 introduce o registro persistente de eventos causais e a sua correlação visual com a curva de ROAS — primeiro bloco da Causal Intelligence Engine.
+
+| Capacidade | Antes | Depois |
+|---|---|---|
+| Registro de anomalias | Não existia | Detectado e persistido automaticamente pelo pipeline |
+| Timeline de eventos | Hardcoded (sync, governance, insights) | Dinâmica — alimentada por `operational_events` |
+| Correlação visual KPI × evento | Impossível | Marcadores `!` no Momentum Chart com tooltip contextual |
+| Rastreabilidade causal | Zero | Cada evento tem `impact_scope` JSONB com valores antes/depois |
+
+---
+
+## v1.8.1 — Database Foundation: `operational_events`
+
+### Migrations aplicadas
+
+**010 — Tabela `operational_events`**
+
+Registro canônico de eventos do domínio para análise causal. Schema:
+
+| Coluna | Tipo | Descrição |
+|---|---|---|
+| `event_type` | TEXT | `anomaly` · `intervention` · `governance_fix` · `system_change` |
+| `category` | TEXT | `kpi_anomaly` · `sync_success` · `sync_error` · `budget` · `naming` |
+| `impact_scope` | JSONB | Payload heterogêneo: valores antes/depois, métricas afetadas, desvios |
+| `actor` | TEXT | `system` (pipeline) ou e-mail do usuário (intervenção manual futura) |
+| `evidence_id` | UUID | FK opcional para `semantic_governance_evidence` (cross-referência causal) |
+| `occurred_at` | TIMESTAMPTZ | Momento do evento (distinto de `created_at` de inserção) |
+
+Dois índices: `(workspace_id, occurred_at DESC)` para queries temporais e `GIN(impact_scope)` para filtros analíticos sobre o payload.
+
+**011 — RLS Workspace-Scoped**
+
+Mesmo padrão das migrations 008/009: RLS habilitado, policy `SELECT TO public USING(workspace_id = ...)`. Writes do backend via service-key bypassam RLS — sem policy de INSERT necessária.
+
+### Arquivos criados
+
+| Arquivo | Conteúdo |
+|---|---|
+| `supabase/migrations/010_operational_events.sql` | DDL da tabela + índices + comentário |
+| `supabase/migrations/011_rls_operational_events.sql` | RLS + policy MVP + GRANT SELECT |
+
+---
+
+## v1.8.2 — Backend Stabilization & API Route
+
+### Correção estrutural do pipeline (`a_data_sync.py`)
+
+O bloco GA4 do pipeline tinha três erros de indentação que impediam execução correta em produção:
+
+1. `resolve_obsolete_insights` indentado erroneamente como argumento de `record_operational_event` — Python interpretava como continuação de chamada.
+2. `sys.exit(1)` fora do bloco `except` — executaria incondicionalmente após o bloco GA4, mesmo em caso de sucesso.
+3. `n_ga4` referenciado antes de possível atribuição — `NameError` garantido quando `ga4_available == False`.
+
+Correções aplicadas: indentação alinhada, `n_ga4 = 0` inicializado antes do bloco, `sys.exit(1)` devolvido ao `except`.
+
+**Adicionado:** `record_operational_event(..., category="sync_success")` ao final de cada etapa bem-sucedida — campaigns, kpi_cache_daily e keywords. Antes existia apenas registro de falha.
+
+### API Route: Timeline Endpoint
+
+Criada rota Next.js em `frontend/src/app/api/workspaces/[workspace_id]/timeline/route.ts`, seguindo o padrão arquitetural das rotas existentes (`handleApiRoute` + `readRows` + `makeEnvelope`).
+
+A rota consulta `operational_events` com filtros opcionais de data e limite, mapeando cada linha para o tipo `TimelineEvent` com severidade derivada da `category`.
+
+Removidos dois artefatos incorretos:
+- `frontend/src/lib/api/route.ts` — stub que não estava no diretório `app/api/` e nunca seria servido como endpoint Next.js.
+- `backend/connectors/route.ts` — arquivo TypeScript depositado erroneamente na pasta de connectors Python.
+
+### Novos módulos Python
+
+| Módulo | Responsabilidade |
+|---|---|
+| `operational_events.py` | `record_operational_event()` — persiste eventos com suporte a `dry_run`; nunca lança exceção (falha silenciosa com log) |
+| `timeline_engine.py` | `get_operational_timeline()`, `get_kpi_diff()`, `get_executive_momentum_data()` — consultas Supabase para a timeline e diff de KPI entre períodos |
+
+---
+
+## v1.8.3 — Causal Engine: ROAS Anomaly Detection
+
+### Lógica de detecção
+
+Função `detect_kpi_anomaly()` em `operational_events.py`. Executa automaticamente ao final de cada ciclo de sincronização de KPIs, antes do sync de keywords:
+
+1. Consulta `kpi_cache_daily` para os últimos 30 dias de ROAS, ordenado cronologicamente.
+2. Calcula a **média simples do período** (30d).
+3. Verifica se o **valor mais recente** desvia mais de ±30% da média.
+4. Se anomalia detectada: persiste em `operational_events` com `event_type="anomaly"`, `category="kpi_anomaly"` e `impact_scope` contendo `last_value`, `mean_value`, `deviation_pct`, `last_date` e parâmetros do detector.
+
+**Threshold parametrizável:** `lookback_days=30`, `threshold=0.30` — valores padrão alinhados com a lógica do `MomentumChart` no frontend (ambos concordam na definição de anomalia).
+
+**Comportamento de falha seguro:** erros de query ou conexão geram log `WARNING` e retorno silencioso — o detector nunca aborta o pipeline.
+
+### Validação em campo
+
+Na primeira execução após a migration 010, o detector registrou uma anomalia de **ROAS −100%** em relação à média de 30 dias — confirmando funcionamento completo do ciclo: BigQuery → `kpi_cache_daily` → detector Python → `operational_events` → API Route → Dashboard.
+
+```
+[detect_kpi_anomaly] Anomaly recorded: roas -100.0% vs 30d mean
+```
+
+---
+
+## v1.8.4 — Frontend: Anomaly Markers & Contextual Tooltips
+
+### Marcadores de anomalia no Momentum Chart
+
+`MarkerType` estendido com `"anomaly"` — quarto tipo de marcador no `MomentumChart`, ao lado de Sync (`S`), Governance (`G`) e Insight (`I`):
+
+| Tipo | Cor | Letra | Fonte |
+|---|---|---|---|
+| Anomaly | orange-500 `#f97316` | `!` | `operational_events WHERE category = 'kpi_anomaly'` |
+
+O componente busca eventos de anomalia na inicialização (6ª query no `Promise.all` existente — sem fetch redundante). Cada evento é adicionado ao `chartMarkers` useMemo via `tryAdd(occurred_at, "anomaly")`, que valida se a data existe no período selecionado e deduplica por data.
+
+### Tooltips contextuais no Timeline Panel
+
+Cada anomalia aparece como row dinâmica na "Timeline Operacional" com hover tooltip que exibe, a partir do `impact_scope`:
+
+- Desvio percentual com sinal (`+` / `−`) e cor semântica (vermelho/verde)
+- Último valor observado vs. média do período de referência
+- Janela de lookback usada pelo detector
+
+Máximo 3 eventos exibidos (`.slice(0, 3)`) para não ocupar mais espaço do que os 3 rows fixos existentes (Sync, Governance, Insights). Badge de contagem total exibido no header quando `anomalyEvents.length > 0`.
+
+### Checklist de Implantação
+
+- [x] Badge posicionado no dia exato da anomalia (validado contra `periodDates`)
+- [x] Tooltip formata `deviation_pct` com sinal, `last_value` e `mean_value` com 2 casas decimais
+- [x] Múltiplos eventos no mesmo dia colapsam para um marcador `!` no chart; exibidos individualmente na lista do Timeline panel
+
+### Arquivos alterados
+
+| Arquivo | Alterações |
+|---|---|
+| `frontend/src/components/ExecutiveBoardView.tsx` | `MarkerType` + `AnomalyEvent` + `MARKER_STYLE.anomaly` + state + fetch + `chartMarkers` + Timeline rows |
+
+---
+
+## Próximos Passos — v1.9: Explainable AI / Insight Diffs
+
+Com a infraestrutura causal estabelecida, a v1.9 focará em **tornar os insights explicáveis**: correlacionar automaticamente variações de KPI com eventos registrados em `operational_events`, gerar narrativas de causa-efeito e comparar o estado de insights entre períodos (Snapshot Diff Engine).
+
+Capacidades previstas:
+
+- **Insight Diff:** comparação do insight atual com o estado anterior (base em `get_previous_insight_state()` já implementada em `insights.py`).
+- **Causal Narrative:** dada uma variação de ROAS, listar eventos operacionais contemporâneos como candidatos causais.
+- **Anomaly Resolution:** marcar anomalias como `resolved` quando o KPI retorna ao intervalo normal, fechando o ciclo de observabilidade.
