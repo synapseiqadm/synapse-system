@@ -36,6 +36,35 @@ interface InsightFeedItem {
 
 const SEV_ORDER: Record<InsightSeverity, number> = { critical: 0, high: 1, medium: 2, low: 3 };
 
+// ─── Consolidation constants ──────────────────────────────────────────────────
+
+const GROUPABLE_TYPES = new Set([
+  "campaign_zero_conversions_with_cost",
+  "keyword_zero_conversions_with_cost",
+]);
+
+// Each inner array describes a set of types where only the most recent period
+// should surface — they describe the same underlying condition at different
+// points in time and are mutually exclusive by design.
+const MUTUALLY_EXCLUSIVE_TYPES: string[][] = [
+  [
+    "ga4_not_configured",
+    "ga4_configured_but_incomplete",
+    "ga4_configured_but_no_conversion_events",
+  ],
+];
+
+interface InsightGroup {
+  insight_type:       string;
+  items:              InsightFeedItem[];
+  total_cost:         number;
+  dominant_severity:  InsightSeverity;
+}
+
+type ConsolidatedItem =
+  | { kind: "single"; item:  InsightFeedItem }
+  | { kind: "group";  group: InsightGroup    };
+
 const INSIGHT_TYPE_LABELS: Record<string, string> = {
   campaign_zero_conversions_with_cost: "Campanha Sem Conversão",
   keyword_zero_conversions_with_cost:  "Keyword Sem Conversão",
@@ -73,6 +102,92 @@ function evidenceSearchText(ins: InsightFeedItem): string {
   if (!ins.evidence) return "";
   const ev = ins.evidence;
   return [ev.keyword, ev.campaign_name, ev.campaign_id].filter(Boolean).join(" ").toLowerCase();
+}
+
+// ─── Consolidation helpers ────────────────────────────────────────────────────
+
+const STATUS_PRIORITY: Record<InsightStatus, number> = {
+  reviewed: 0, new: 1, resolved: 2, dismissed: 3,
+};
+
+function deduplicateByDedupeKey(insights: InsightFeedItem[]): InsightFeedItem[] {
+  const map = new Map<string, InsightFeedItem>();
+  for (const ins of insights) {
+    const key  = ins.dedupe_key ?? ins.id;
+    const prev = map.get(key);
+    if (!prev) { map.set(key, ins); continue; }
+    const newDate  = ins.date_range_start ?? "";
+    const prevDate = prev.date_range_start ?? "";
+    if (newDate > prevDate) { map.set(key, ins); continue; }
+    if (newDate === prevDate && STATUS_PRIORITY[ins.status] < STATUS_PRIORITY[prev.status]) {
+      map.set(key, ins);
+    }
+  }
+  return [...map.values()];
+}
+
+function applyMutualExclusion(insights: InsightFeedItem[]): InsightFeedItem[] {
+  let result = [...insights];
+  for (const exclusiveGroup of MUTUALLY_EXCLUSIVE_TYPES) {
+    const found = exclusiveGroup.flatMap(type => result.filter(i => i.insight_type === type));
+    if (found.length <= 1) continue;
+    const winner = found.reduce((best, curr) =>
+      (curr.date_range_start ?? "") > (best.date_range_start ?? "") ? curr : best,
+    );
+    const toRemove = new Set(found.filter(i => i.id !== winner.id).map(i => i.id));
+    result = result.filter(i => !toRemove.has(i.id));
+  }
+  return result;
+}
+
+function dominantSeverity(items: InsightFeedItem[]): InsightSeverity {
+  return (["critical", "high", "medium", "low"] as InsightSeverity[]).find(
+    s => items.some(i => i.severity === s),
+  ) ?? "low";
+}
+
+function computeConsolidated(insights: InsightFeedItem[]): ConsolidatedItem[] {
+  const groupMap = new Map<string, InsightFeedItem[]>();
+  const singles: InsightFeedItem[] = [];
+
+  for (const ins of insights) {
+    if (GROUPABLE_TYPES.has(ins.insight_type)) {
+      const list = groupMap.get(ins.insight_type) ?? [];
+      list.push(ins);
+      groupMap.set(ins.insight_type, list);
+    } else {
+      singles.push(ins);
+    }
+  }
+
+  const groupItems: ConsolidatedItem[] = [...groupMap.entries()]
+    .map(([type, items]) => ({
+      kind: "group" as const,
+      group: {
+        insight_type: type,
+        items: [...items].sort((a, b) => {
+          const ca = typeof a.evidence?.cost === "number" ? a.evidence.cost : 0;
+          const cb = typeof b.evidence?.cost === "number" ? b.evidence.cost : 0;
+          return cb - ca;
+        }),
+        total_cost: items.reduce(
+          (sum, i) => sum + (typeof i.evidence?.cost === "number" ? i.evidence.cost : 0),
+          0,
+        ),
+        dominant_severity: dominantSeverity(items),
+      },
+    }))
+    .sort((a, b) => SEV_ORDER[a.group.dominant_severity] - SEV_ORDER[b.group.dominant_severity]);
+
+  const singleItems: ConsolidatedItem[] = [...singles]
+    .sort((a, b) => {
+      const sv = SEV_ORDER[a.severity] - SEV_ORDER[b.severity];
+      if (sv !== 0) return sv;
+      return (b.updated_at ?? b.created_at).localeCompare(a.updated_at ?? a.created_at);
+    })
+    .map(item => ({ kind: "single" as const, item }));
+
+  return [...groupItems, ...singleItems];
 }
 
 // ─── Status actions ───────────────────────────────────────────────────────────
@@ -234,9 +349,10 @@ interface InsightCardProps {
   updatingKey: string | null;
   updateError: Record<string, string>;
   onStatusChange: (id: string, to: InsightStatus) => void;
+  compact?: boolean;
 }
 
-function InsightCard({ insight, updatingKey, updateError, onStatusChange }: InsightCardProps) {
+function InsightCard({ insight, updatingKey, updateError, onStatusChange, compact = false }: InsightCardProps) {
   const [expanded, setExpanded] = useState(false);
   const actions = STATUS_ACTIONS[insight.status] ?? [];
 
@@ -252,7 +368,7 @@ function InsightCard({ insight, updatingKey, updateError, onStatusChange }: Insi
   return (
     <div className={`bg-[#0f1117] border border-zinc-800/60 rounded-xl overflow-hidden border-l-2 ${severityLeft}`}>
       {/* Header */}
-      <div className="flex items-start justify-between gap-3 px-4 pt-4 pb-2">
+      <div className={`flex items-start justify-between gap-3 ${compact ? "px-3 pt-3 pb-1.5" : "px-4 pt-4 pb-2"}`}>
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
             {insightTypeLabel(insight.insight_type)}
@@ -273,10 +389,10 @@ function InsightCard({ insight, updatingKey, updateError, onStatusChange }: Insi
       </div>
 
       {/* Body */}
-      <div className="px-4 pb-3">
-        <p className="text-sm font-semibold text-zinc-100 mb-1.5 leading-snug">{insight.title}</p>
+      <div className={compact ? "px-3 pb-2" : "px-4 pb-3"}>
+        <p className={`font-semibold text-zinc-100 mb-1.5 leading-snug ${compact ? "text-xs" : "text-sm"}`}>{insight.title}</p>
         <p className="text-xs text-zinc-400 leading-relaxed mb-2">{insight.summary}</p>
-        {insight.recommendation && (
+        {!compact && insight.recommendation && (
           <div className="flex gap-2 bg-zinc-900/60 border border-zinc-800/40 rounded-lg px-3 py-2">
             <Lightbulb size={12} className="text-amber-500/70 shrink-0 mt-0.5" />
             <p className="text-xs text-zinc-400 leading-relaxed">{insight.recommendation}</p>
@@ -286,7 +402,7 @@ function InsightCard({ insight, updatingKey, updateError, onStatusChange }: Insi
 
       {/* Period */}
       {insight.date_range_start && (
-        <div className="px-4 pb-2">
+        <div className={compact ? "px-3 pb-1.5" : "px-4 pb-2"}>
           <p className="text-[10px] text-zinc-700 font-mono">
             Período: {formatDateOnly(insight.date_range_start)} → {formatDateOnly(insight.date_range_end ?? "")}
           </p>
@@ -295,14 +411,14 @@ function InsightCard({ insight, updatingKey, updateError, onStatusChange }: Insi
 
       {/* Error */}
       {cardErr && (
-        <div className="mx-4 mb-2 flex items-center gap-1.5 text-[11px] text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-1.5">
+        <div className={`${compact ? "mx-3" : "mx-4"} mb-2 flex items-center gap-1.5 text-[11px] text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-1.5`}>
           <AlertCircle size={11} />
           {cardErr}
         </div>
       )}
 
       {/* Footer: actions + expand */}
-      <div className="flex items-center justify-between gap-2 px-4 pb-4 border-t border-zinc-800/40 pt-2.5 flex-wrap gap-y-2">
+      <div className={`flex items-center justify-between gap-2 ${compact ? "px-3 pb-3" : "px-4 pb-4"} border-t border-zinc-800/40 pt-2.5 flex-wrap gap-y-2`}>
         <div className="flex items-center gap-1.5 flex-wrap">
           {actions.map((action) => {
             const key = `${insight.id}:${action.to}`;
@@ -348,6 +464,106 @@ function InsightCard({ insight, updatingKey, updateError, onStatusChange }: Insi
               <span>Key: <span className="font-mono text-zinc-600">{insight.dedupe_key}</span></span>
             )}
             <span>Criado: <span className="font-mono text-zinc-600">{formatDateShort(insight.created_at)}</span></span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── InsightGroupCard ─────────────────────────────────────────────────────────
+
+const GROUP_LABELS: Record<string, {
+  typeLabel:   string;
+  headline:    (n: number) => string;
+  expandLabel: (n: number) => string;
+}> = {
+  campaign_zero_conversions_with_cost: {
+    typeLabel:   "Campanhas Sem Conversão",
+    headline:    (n) => `${n} campanha${n !== 1 ? "s" : ""} ${n !== 1 ? "consumiram" : "consumiu"} verba sem registrar conversões`,
+    expandLabel: (n) => `Ver ${n} campanha${n !== 1 ? "s" : ""} afetada${n !== 1 ? "s" : ""}`,
+  },
+  keyword_zero_conversions_with_cost: {
+    typeLabel:   "Keywords Sem Conversão",
+    headline:    (n) => `${n} keyword${n !== 1 ? "s" : ""} ${n !== 1 ? "consumiram" : "consumiu"} verba sem gerar conversões`,
+    expandLabel: (n) => `Ver ${n} keyword${n !== 1 ? "s" : ""} afetada${n !== 1 ? "s" : ""}`,
+  },
+};
+
+function InsightGroupCard({ group, updatingKey, updateError, onStatusChange }: {
+  group: InsightGroup;
+  updatingKey: string | null;
+  updateError: Record<string, string>;
+  onStatusChange: (id: string, to: InsightStatus) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const cfg = GROUP_LABELS[group.insight_type];
+
+  const severityLeft = {
+    critical: "border-l-red-500",
+    high:     "border-l-orange-500",
+    medium:   "border-l-amber-500/70",
+    low:      "border-l-zinc-700",
+  }[group.dominant_severity];
+
+  return (
+    <div className={`bg-[#0f1117] border border-zinc-800/60 rounded-xl overflow-hidden border-l-2 ${severityLeft}`}>
+      {/* Header */}
+      <div className="px-4 pt-4 pb-3">
+        <div className="flex items-center gap-2 mb-2 flex-wrap">
+          <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">{cfg.typeLabel}</span>
+          <SeverityBadge severity={group.dominant_severity} />
+          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-zinc-800/60 text-zinc-400 border-zinc-700/40">
+            {group.items.length} {group.insight_type.includes("keyword") ? "keywords" : "campanhas"}
+          </span>
+        </div>
+        <p className="text-sm font-semibold text-zinc-100 leading-snug mb-3">
+          {cfg.headline(group.items.length)}
+        </p>
+        {/* Aggregate metrics */}
+        <div className="flex items-center gap-6">
+          {group.total_cost > 0 && (
+            <div>
+              <p className="text-[10px] text-zinc-600 uppercase tracking-wider mb-0.5">Custo total</p>
+              <p className="text-base font-bold text-amber-400 font-mono">{formatBRL(group.total_cost)}</p>
+            </div>
+          )}
+          <div>
+            <p className="text-[10px] text-zinc-600 uppercase tracking-wider mb-0.5">Conversões</p>
+            <p className="text-base font-bold text-red-400/80 font-mono">0</p>
+          </div>
+          <div>
+            <p className="text-[10px] text-zinc-600 uppercase tracking-wider mb-0.5">Afetados</p>
+            <p className="text-base font-bold text-zinc-300 font-mono">{group.items.length}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Expand toggle */}
+      <div className="px-4 py-2.5 border-t border-zinc-800/40">
+        <button
+          onClick={() => setExpanded(v => !v)}
+          className="flex items-center gap-1.5 text-[11px] text-zinc-500 hover:text-zinc-300 transition-colors"
+        >
+          {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+          {expanded ? "Fechar detalhe" : cfg.expandLabel(group.items.length)}
+        </button>
+      </div>
+
+      {/* Drilldown — compact cards with max-height scroll */}
+      {expanded && (
+        <div className="border-t border-zinc-800/60 max-h-96 overflow-y-auto">
+          <div className="p-3 space-y-2">
+            {group.items.map(item => (
+              <InsightCard
+                key={item.id}
+                insight={item}
+                updatingKey={updatingKey}
+                updateError={updateError}
+                onStatusChange={onStatusChange}
+                compact
+              />
+            ))}
           </div>
         </div>
       )}
@@ -413,16 +629,23 @@ export function InsightsView() {
     setUpdatingKey(null);
   }, [supabase]);
 
-  // Derived summary stats
-  const totalCount    = insights.length;
-  const newCount      = insights.filter((i) => i.status === "new").length;
-  const highCount     = insights.filter((i) => i.severity === "high" || i.severity === "critical").length;
-  const treatedCount  = insights.filter((i) => i.status === "reviewed" || i.status === "resolved").length;
-  const lastUpdated   = insights.length > 0 ? insights[0].updated_at ?? insights[0].created_at : null;
+  // Deduplicate by dedupe_key (latest period wins; reviewed > new on tie)
+  // then enforce mutual exclusion between semantically equivalent GA4 types.
+  const deduped = useMemo(() => {
+    const d = deduplicateByDedupeKey(insights);
+    return applyMutualExclusion(d);
+  }, [insights]);
 
-  // Filter + sort
+  // Derived summary stats (operate on deduped signals, not raw rows)
+  const totalCount   = deduped.length;
+  const newCount     = deduped.filter((i) => i.status === "new").length;
+  const highCount    = deduped.filter((i) => i.severity === "high" || i.severity === "critical").length;
+  const treatedCount = deduped.filter((i) => i.status === "reviewed" || i.status === "resolved").length;
+  const lastUpdated  = insights.length > 0 ? insights[0].updated_at ?? insights[0].created_at : null;
+
+  // Filter + sort (operates on deduped signals)
   const filtered = useMemo(() => {
-    let list = insights;
+    let list = deduped;
 
     if (statusFilter === "new")       list = list.filter((i) => i.status === "new");
     else if (statusFilter === "reviewed")  list = list.filter((i) => i.status === "reviewed");
@@ -454,7 +677,10 @@ export function InsightsView() {
       const bu = b.updated_at ?? b.created_at;
       return bu.localeCompare(au);
     });
-  }, [insights, statusFilter, typeFilter, search]);
+  }, [deduped, statusFilter, typeFilter, search]);
+
+  // Group groupable types into summary cards; singletons stay individual
+  const consolidated = useMemo(() => computeConsolidated(filtered), [filtered]);
 
   const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
     { value: "all",       label: "Todos"      },
@@ -637,29 +863,39 @@ export function InsightsView() {
         </p>
 
         {/* List */}
-        {filtered.length === 0 ? (
+        {consolidated.length === 0 ? (
           <div className="flex items-center justify-center h-24 text-zinc-700 text-sm">
             Nenhum insight encontrado para esse filtro.
           </div>
         ) : (
           <div className="p-4 space-y-3">
-            {filtered.map((ins) => (
-              <InsightCard
-                key={ins.id}
-                insight={ins}
-                updatingKey={updatingKey}
-                updateError={updateErrors}
-                onStatusChange={updateStatus}
-              />
-            ))}
+            {consolidated.map((item) =>
+              item.kind === "group" ? (
+                <InsightGroupCard
+                  key={`group-${item.group.insight_type}`}
+                  group={item.group}
+                  updatingKey={updatingKey}
+                  updateError={updateErrors}
+                  onStatusChange={updateStatus}
+                />
+              ) : (
+                <InsightCard
+                  key={item.item.id}
+                  insight={item.item}
+                  updatingKey={updatingKey}
+                  updateError={updateErrors}
+                  onStatusChange={updateStatus}
+                />
+              )
+            )}
           </div>
         )}
 
         {/* Footer */}
-        {filtered.length > 0 && (
+        {consolidated.length > 0 && (
           <div className="border-t border-zinc-800/40 px-4 py-2.5">
             <p className="text-[10px] text-zinc-700 font-mono">
-              {filtered.length} de {totalCount} insights
+              {consolidated.length} item{consolidated.length !== 1 ? "s" : ""} · {deduped.length} sinais únicos · {insights.length} registros
             </p>
           </div>
         )}
