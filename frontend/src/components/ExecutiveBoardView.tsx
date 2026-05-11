@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState, useMemo } from "react";
 import {
-  AreaChart, Area, XAxis, Tooltip, ResponsiveContainer,
+  AreaChart, Area, XAxis, Tooltip, ResponsiveContainer, ReferenceDot,
 } from "recharts";
 import {
   Loader2, CheckCircle2, ShieldCheck, Activity, Database,
@@ -73,6 +73,11 @@ function fmtN(n: number): string {
 function fmtPct(ratio: number | null): string {
   if (ratio === null) return "—";
   return (ratio * 100).toFixed(1).replace(".", ",") + "%";
+}
+
+function fmtDelta(delta: number): string {
+  const sign = delta >= 0 ? "+" : "";
+  return `${sign}${delta.toFixed(1).replace(".", ",")}%`;
 }
 
 function dedupeInsights(items: MinInsight[]): MinInsight[] {
@@ -187,6 +192,73 @@ const URGENCY_TEXT: Record<string, string> = {
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
+interface MomentumChartProps {
+  data: ChartPoint[];
+  trendDelta: number;
+  isAnomaly: boolean;
+  contextualLabels?: Array<{ pointIndex: number; label: string }>; // future: causal annotations
+}
+
+function MomentumChart({ data, trendDelta, isAnomaly }: MomentumChartProps) {
+  const stroke    = trendDelta >= 0 ? "#10b981" : "#ef4444";
+  const deltaFmt  = fmtDelta(trendDelta);
+  const lastPoint = data.length > 0 ? data[data.length - 1] : null;
+
+  if (data.length <= 1) {
+    return (
+      <div className="h-[72px] flex items-center justify-center text-[9px] text-zinc-700 font-mono">
+        sem dados para o período
+      </div>
+    );
+  }
+
+  return (
+    <ResponsiveContainer width="100%" height={72}>
+      <AreaChart data={data} margin={{ top: 2, right: 2, left: 0, bottom: 0 }}>
+        <defs>
+          <linearGradient id="exec-pulse-grad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="5%"  stopColor={stroke} stopOpacity={0.13} />
+            <stop offset="95%" stopColor={stroke} stopOpacity={0}    />
+          </linearGradient>
+        </defs>
+        <XAxis dataKey="date" tick={false} axisLine={{ stroke: "#27272a" }} tickLine={false} />
+        <Tooltip
+          contentStyle={{ background: "#18181b", border: "1px solid #27272a", borderRadius: 6, padding: "3px 8px", fontSize: 10 }}
+          itemStyle={{ color: "#a1a1aa", fontSize: 10 }}
+          labelStyle={{ color: "#71717a", fontSize: 9 }}
+          formatter={(v) => [
+            `${Number(v).toFixed(2).replace(".", ",")}x  ·  Δ ${deltaFmt}`,
+            "ROAS",
+          ]}
+          labelFormatter={(lbl) => {
+            const parts = String(lbl).split("-");
+            return `${parts[2]}/${parts[1]}`;
+          }}
+        />
+        {isAnomaly && lastPoint && (
+          <ReferenceDot
+            x={lastPoint.date}
+            y={lastPoint.roas}
+            r={4}
+            fill={stroke}
+            stroke="#18181b"
+            strokeWidth={1.5}
+          />
+        )}
+        <Area
+          type="monotone"
+          dataKey="roas"
+          stroke={stroke}
+          strokeWidth={1.5}
+          fill="url(#exec-pulse-grad)"
+          dot={false}
+          activeDot={{ r: 3, strokeWidth: 0, fill: stroke }}
+        />
+      </AreaChart>
+    </ResponsiveContainer>
+  );
+}
+
 function PulseMetric({ label, value }: { label: string; value: string }) {
   return (
     <div>
@@ -295,6 +367,23 @@ export function ExecutiveBoardView() {
     const valid = chartData.filter(d => d.spend > 0);
     if (valid.length === 0) return null;
     return valid.reduce((s, d) => s + d.spend, 0);
+  }, [chartData]);
+
+  const { trendDelta, isAnomaly } = useMemo(() => {
+    const valid = chartData.filter(d => d.roas > 0);
+    if (valid.length < 2) return { trendDelta: 0, isAnomaly: false };
+    const avg30   = valid.reduce((s, d) => s + d.roas, 0) / valid.length;
+    const lastRoas = valid[valid.length - 1].roas;
+    const anomaly  = avg30 > 0 && Math.abs(lastRoas - avg30) / avg30 > 0.30;
+    if (valid.length < 8) return { trendDelta: 0, isAnomaly: anomaly };
+    const last7   = valid.slice(-7);
+    const prev7   = valid.slice(-14, -7);
+    const avgLast = last7.reduce((s, d) => s + d.roas, 0) / last7.length;
+    const avgPrev = prev7.length > 0
+      ? prev7.reduce((s, d) => s + d.roas, 0) / prev7.length
+      : avgLast;
+    const delta   = avgPrev > 0 ? ((avgLast - avgPrev) / avgPrev) * 100 : 0;
+    return { trendDelta: delta, isAnomaly: anomaly };
   }, [chartData]);
 
   const wasteAmount = useMemo(() =>
@@ -411,7 +500,14 @@ export function ExecutiveBoardView() {
         <div className="col-span-2 bg-[#0f1117] border border-zinc-800/60 rounded-xl overflow-hidden flex flex-col">
           <div className="px-4 py-2.5 border-b border-zinc-800/40 flex items-center justify-between">
             <p className="text-[10px] font-semibold text-zinc-600 uppercase tracking-wider">Performance Pulse</p>
-            <span className="text-[9px] text-zinc-700 font-mono">últimos 30d</span>
+            <div className="flex items-center gap-2">
+              {chartData.length > 1 && (
+                <span className={`text-[10px] font-mono font-semibold ${trendDelta >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                  Δ {fmtDelta(trendDelta)}
+                </span>
+              )}
+              <span className="text-[9px] text-zinc-700 font-mono">últimos 30d</span>
+            </div>
           </div>
 
           {/* 4 key metrics — escala × investimento × eficiência */}
@@ -422,55 +518,13 @@ export function ExecutiveBoardView() {
             <PulseMetric label="ROAS"         value={avgRoas !== null ? `${avgRoas.toFixed(2).replace(".", ",")}x` : "—"} />
           </div>
 
-          {/* Mini AreaChart — ROAS trend */}
+          {/* Momentum Chart — ROAS trend com delta e anomalia */}
           <div className="px-2 flex-1">
-            {chartData.length > 1 ? (
-              <ResponsiveContainer width="100%" height={72}>
-                <AreaChart data={chartData} margin={{ top: 2, right: 2, left: 0, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="exec-pulse-grad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%"  stopColor="#6366f1" stopOpacity={0.14} />
-                      <stop offset="95%" stopColor="#6366f1" stopOpacity={0}    />
-                    </linearGradient>
-                  </defs>
-                  <XAxis
-                    dataKey="date"
-                    tick={false}
-                    axisLine={{ stroke: "#27272a" }}
-                    tickLine={false}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      background: "#18181b",
-                      border: "1px solid #27272a",
-                      borderRadius: 6,
-                      padding: "3px 8px",
-                      fontSize: 10,
-                    }}
-                    itemStyle={{ color: "#a1a1aa", fontSize: 10 }}
-                    labelStyle={{ color: "#71717a", fontSize: 9 }}
-                    formatter={(v) => [`${Number(v).toFixed(2)}x`, "ROAS"]}
-                    labelFormatter={(lbl) => {
-                      const parts = String(lbl).split("-");
-                      return `${parts[2]}/${parts[1]}`;
-                    }}
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="roas"
-                    stroke="#6366f1"
-                    strokeWidth={1.5}
-                    fill="url(#exec-pulse-grad)"
-                    dot={false}
-                    activeDot={{ r: 3, strokeWidth: 0, fill: "#818cf8" }}
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="h-[72px] flex items-center justify-center text-[9px] text-zinc-700 font-mono">
-                sem dados para o período
-              </div>
-            )}
+            <MomentumChart
+              data={chartData}
+              trendDelta={trendDelta}
+              isAnomaly={isAnomaly}
+            />
           </div>
 
           {/* Footer context */}
