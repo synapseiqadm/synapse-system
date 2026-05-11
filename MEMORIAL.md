@@ -2147,3 +2147,120 @@ Capacidades previstas:
 - **Insight Diff:** comparação do insight atual com o estado anterior (base em `get_previous_insight_state()` já implementada em `insights.py`).
 - **Causal Narrative:** dada uma variação de ROAS, listar eventos operacionais contemporâneos como candidatos causais.
 - **Anomaly Resolution:** marcar anomalias como `resolved` quando o KPI retorna ao intervalo normal, fechando o ciclo de observabilidade.
+
+---
+
+## v2.0 — Strategic Roadmap: GTM Governance & Human-in-the-Loop
+
+**Data prevista:** 2026 Q3  
+**Posicionamento:** A v2.0 marca a transição do SynapseIQ de plataforma de **Diagnóstico** para plataforma de **Inferência Robusta** — onde cada conclusão sobre performance é rastreável até uma regra de negócio validada por humanos, não apenas inferida de dados brutos.
+
+### O problema que a v2.0 resolve
+
+As versões anteriores (v1.0–v1.9) operam sobre eventos GA4 e Google Ads como chegam — com nomes arbitrários, classificações provisórias e múltiplas fontes de verdade conflitantes. O resultado é que ROAS, conversões e o funil semântico são sempre parcialmente contaminados por:
+
+- Eventos legados com nomes não canônicos (`app_criar_conta`, `mentor_signup_with_auto_signin`)
+- Tags duplicadas ou ambíguas não rastreadas até intenção de negócio
+- Inferências históricas baseadas em dados cuja classificação nunca foi validada pelo cliente
+
+A v2.0 resolve isso introduzindo o **GTM como camada de contrato semântico** e uma **UI de aprovação humana** antes de qualquer inferência analítica.
+
+---
+
+### Módulo 1 — Governança via Google Tag Manager
+
+**Objetivo:** Utilizar o GTM como camada de abstração semântica para normalização de eventos na fonte — antes de chegarem ao BigQuery, Supabase ou qualquer modelo analítico.
+
+#### Funcionalidades previstas
+
+**Mapeamento de Aliases**
+
+Tradução de eventos legados para nomes canônicos do registro semântico da Synapse:
+
+| Evento legado (GA4 atual) | Nome canônico (Synapse) | Classificação |
+|---|---|---|
+| `app_criar_conta` | `account_created` | Primária (KPI) |
+| `mentor_signup_with_auto_signin` | `mentor_onboarded` | Primária (KPI) |
+| `form_start` | `intent_signal` | Secundária (Auxiliar) |
+| `LinkedIn` | *(ignorar)* | Legada |
+
+**Taxonomia de Tags**
+
+Cada tag GTM classificada em uma de quatro categorias:
+
+| Categoria | Descrição | Impacto analítico |
+|---|---|---|
+| **Primária (KPI)** | Evento de conversão oficial, validado pelo cliente | Entra no cálculo de ROAS e funil |
+| **Secundária (Auxiliar)** | Sinal de comportamento sem valor de conversão direto | Entra no funil semântico, não no ROAS |
+| **Legada** | Evento histórico sem equivalente canônico, em desuso | Excluído de inferências, mantido para rastreabilidade |
+| **Ignorada** | Ruído técnico sem valor analítico (ex: erros de GTM) | Filtrado antes de qualquer processamento |
+
+**Diagnóstico Semântico Prévio**
+
+Antes de processar qualquer inferência histórica, o pipeline executa uma verificação:
+1. Cobertura GTM: % de eventos com tag classificada vs. eventos brutos
+2. Conflitos de alias: eventos com mais de uma classificação ativa
+3. Lacunas de KPI: períodos sem eventos Primários registrados
+
+---
+
+### Módulo 2 — UI de Aprovação e Revisão Semântica
+
+**Objetivo:** Criar um ambiente de curadoria onde a equipe SynapseIQ e o cliente (Woke People) validam explicitamente cada classificação semântica antes que ela influencie dados históricos.
+
+#### Workflow de aprovação
+
+```
+1. DETECÇÃO       → GTM identifica evento novo ou alias candidato
+       ↓
+2. PROPOSIÇÃO     → Synapse classifica automaticamente com base no
+                    semantic_registry.yml e histórico de aprovações
+       ↓
+3. APROVAÇÃO      → Interface de curadoria apresenta a proposta ao
+   HUMANA           Time Interno (SynapseIQ) para revisão inicial;
+                    classificações que afetam KPI exigem aprovação
+                    adicional do Cliente (Woke People)
+       ↓
+4. INFERÊNCIA     → Após aprovação, o pipeline reprocessa dados
+   HISTÓRICA        históricos com a classificação validada;
+                    inferências anteriores são versionadas
+```
+
+#### Interface de Curadoria
+
+Tela dedicada no dashboard com três painéis:
+
+| Painel | Conteúdo |
+|---|---|
+| **Pendentes** | Eventos/aliases aguardando aprovação — ordenados por impacto estimado no ROAS |
+| **Aprovados** | Classificações validadas com data, aprovador e impacto retroativo calculado |
+| **Conflitos** | Eventos com classificações divergentes entre períodos ou aprovadores |
+
+**Papéis no workflow:**
+
+| Papel | Permissão |
+|---|---|
+| `synapse_analyst` | Propõe e aprova classificações Secundárias, Legadas e Ignoradas |
+| `synapse_admin` | Aprova classificações Primárias (KPI) antes de enviar ao cliente |
+| `client_reviewer` | Valida classificações Primárias — aprovação final antes de inferência |
+
+---
+
+### Impacto esperado
+
+| Dimensão | Antes (v1.x) | Depois (v2.0) |
+|---|---|---|
+| Qualidade dos dados | Eventos brutos com nomes arbitrários | Eventos normalizados para nomes canônicos antes da análise |
+| Confiabilidade do ROAS | Parcialmente contaminado por eventos não validados | Calculado exclusivamente sobre KPIs aprovados pelo cliente |
+| Rastreabilidade | Inferência implícita, sem auditoria | Cada métrica rastreável até uma aprovação humana com data e autor |
+| Reprocessamento histórico | Não existe | Automático após aprovação de nova classificação |
+| "Lixo estatístico" | Presente em todos os cálculos | Filtrado na fonte antes de qualquer processamento analítico |
+
+---
+
+### Pré-requisitos técnicos
+
+- [ ] GTM API integration para leitura de tags e contêineres
+- [ ] `semantic_classifications` table no Supabase (workspace, event_name, canonical_name, category, approved_by, approved_at, version)
+- [ ] Auth multi-tenant real (pré-requisito para papéis de aprovação diferenciados)
+- [ ] Pipeline de reprocessamento histórico versionado (`kpi_cache_daily` com `classification_version`)
