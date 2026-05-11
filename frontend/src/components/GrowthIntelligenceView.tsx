@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Activity, AlertCircle, AlertTriangle, CheckCircle2, XCircle,
   ChevronDown, ChevronUp, Clock, Loader2, ShieldCheck, ShieldAlert,
@@ -18,6 +18,11 @@ import type {
   GovernanceFindingsResponse,
   GovernanceEvidenceResponse,
 } from "@/types/governance";
+import {
+  computeFunnelIntelligence, fmtFunnelPct, isSuspiciousEventName,
+  FUNNEL_STEP_LABELS, FUNNEL_STEP_ORDER,
+} from "@/lib/funnel";
+import type { FunnelIntelligence } from "@/lib/funnel";
 
 // ─── Local types ──────────────────────────────────────────────────────────────
 
@@ -38,17 +43,6 @@ type GovernanceStatus   = "passed" | "warning" | "failed";
 type GovernanceSeverity = "low" | "medium" | "high" | "critical";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-
-const FUNNEL_STEP_ORDER = ["acquisition", "landing", "engagement", "intent", "conversion"] as const;
-
-const FUNNEL_STEP_LABELS: Record<string, string> = {
-  acquisition: "Aquisição",
-  landing:     "Landing",
-  engagement:  "Engajamento",
-  intent:      "Intenção",
-  conversion:  "Conversão",
-};
-
 
 const SEVERITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
 const STATUS_ORDER:   Record<string, number>  = { failed: 0, warning: 1, passed: 2 };
@@ -159,7 +153,7 @@ function FunnelStepBadge({ step }: { step: string }) {
   };
   return (
     <span className={`inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded-full border ${colors[step] ?? "bg-zinc-700/40 text-zinc-400 border-zinc-600/40"}`}>
-      {FUNNEL_STEP_LABELS[step] ?? step}
+      {(FUNNEL_STEP_LABELS as Record<string, string>)[step] ?? step}
     </span>
   );
 }
@@ -275,10 +269,11 @@ function FilterBar({ period, setPeriod, env, setEnv }: {
 
 // ─── Executive cards ──────────────────────────────────────────────────────────
 
-function ExecutiveCards({ overview, govSummary, paidSessions }: {
+function ExecutiveCards({ overview, govSummary, paidSessions, funnelIntel }: {
   overview: ApiState<GrowthOverviewResponse>;
   govSummary: ApiState<GovernanceSummaryResponse>;
   paidSessions: ApiState<PaidSessionsQualityResponse>;
+  funnelIntel: FunnelIntelligence | null;
 }) {
   const ga4 = overview.data?.data.ga4_first_light;
   const gov = govSummary.data?.data;
@@ -299,11 +294,18 @@ function ExecutiveCards({ overview, govSummary, paidSessions }: {
   );
   const sessionsWithout = paidCheck?.paid_sessions_without_progress ?? null;
 
+  const sessionsSub = funnelIntel?.intent_rate != null
+    ? `${fmtFunnelPct(funnelIntel.intent_rate)} com intenção`
+    : "snapshot agregado";
+  const eventsSub = funnelIntel != null && funnelIntel.suspicious_share > 0
+    ? `${fmtFunnelPct(funnelIntel.suspicious_share)} naming suspeito`
+    : "snapshot agregado";
+
   return (
     <div className="grid grid-cols-2 xl:grid-cols-3 gap-3 mb-6">
-      <StatCard label="Sessões GA4"        value={overview.loading ? "…" : ga4 ? fmtN(ga4.sessions)     : "—"} icon={Activity}   sub="snapshot agregado" />
+      <StatCard label="Sessões GA4"        value={overview.loading ? "…" : ga4 ? fmtN(ga4.sessions)     : "—"} icon={Activity}   sub={sessionsSub} />
       <StatCard label="Page Views"         value={overview.loading ? "…" : ga4 ? fmtN(ga4.page_views)   : "—"} icon={TrendingUp}  sub="snapshot agregado" />
-      <StatCard label="Eventos Rastreados" value={overview.loading ? "…" : ga4 ? fmtN(ga4.total_events) : "—"} icon={Zap}         sub="snapshot agregado" />
+      <StatCard label="Eventos Rastreados" value={overview.loading ? "…" : ga4 ? fmtN(ga4.total_events) : "—"} icon={Zap}         sub={eventsSub} accent={funnelIntel != null && funnelIntel.suspicious_share > 0.15} />
       <StatCard label="Warnings Ativos"       value={govSummary.loading ? "…" : activeWarnings !== null ? fmtN(activeWarnings) : "—"}
                 accent={(activeWarnings ?? 0) > 0} icon={ShieldAlert} />
       <StatCard label="Sessões Pagas s/ Avanço" value={paidSessions.loading ? "…" : sessionsWithout !== null ? fmtN(sessionsWithout) : "—"}
@@ -399,62 +401,191 @@ function Ga4FirstLightSection({ overview, events, env }: {
   );
 }
 
-// ─── Semantic Funnel section ──────────────────────────────────────────────────
+// ─── Funnel Intelligence section ─────────────────────────────────────────────
 
-function FunnelSection({ state, env }: { state: ApiState<GrowthFunnelResponse>; env: EnvFilter }) {
+function FunnelIntelligenceSection({ state, funnelIntel, env }: {
+  state: ApiState<GrowthFunnelResponse>;
+  funnelIntel: FunnelIntelligence | null;
+  env: EnvFilter;
+}) {
+  const [showRawEvents, setShowRawEvents] = useState(false);
+
   if (state.loading) return <SectionLoader />;
   if (state.error)   return <SectionError msg={state.error} />;
 
   const data = state.data?.data;
-  if (!data || data.events.length === 0) return <SectionEmpty label="Ainda não há dados de funil para este período." />;
-
-  const byStep: Record<string, typeof data.events> = {};
-  for (const ev of data.events) {
-    (byStep[ev.step] = byStep[ev.step] ?? []).push(ev);
+  if (!data || data.events.length === 0 || !funnelIntel || funnelIntel.health === "no_data") {
+    return <SectionEmpty label="Ainda não há dados de funil para este período." />;
   }
+
+  const intel = funnelIntel;
+  const healthCfg = {
+    healthy:   { label: "Saudável",  cls: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30", Icon: CheckCircle2  },
+    attention: { label: "Atenção",   cls: "bg-amber-500/15   text-amber-400   border-amber-500/30",   Icon: AlertTriangle },
+    limited:   { label: "Limitado",  cls: "bg-zinc-700/40    text-zinc-400    border-zinc-600/40",    Icon: AlertCircle  },
+    no_data:   { label: "Sem dados", cls: "bg-zinc-700/40    text-zinc-400    border-zinc-600/40",    Icon: AlertCircle  },
+  }[intel.health];
+
+  const maxEvents = intel.stages.reduce((m, s) => Math.max(m, s.events), 1);
 
   return (
     <div className="space-y-4">
-      {env !== "all" && (
-        <p className="text-[11px] text-zinc-600 italic">
-          Esta visão usa snapshot agregado de GA4. A segmentação por ambiente depende de evidências de governança disponíveis.
-        </p>
-      )}
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
-        <StatCard label="Sessões"       value={fmtN(data.summary.sessions)}     />
-        <StatCard label="Page Views"    value={fmtN(data.summary.page_views)}   />
-        <StatCard label="Conversões"    value={fmtN(data.summary.conversions)}  />
-        <StatCard label="Total Eventos" value={fmtN(data.summary.total_events)} />
+      {/* Health pill */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <span className={`inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1 rounded-full border ${healthCfg.cls}`}>
+          <healthCfg.Icon size={11} />
+          {healthCfg.label}
+        </span>
+        {intel.suspicious_share > 0 && (
+          <span className="text-[11px] text-amber-500/80 font-mono">
+            {fmtFunnelPct(intel.suspicious_share)} dos eventos com nomenclatura fora do padrão GA4
+          </span>
+        )}
       </div>
 
-      <div className="space-y-2">
-        {FUNNEL_STEP_ORDER.filter((s) => byStep[s]?.length).map((step) => (
-          <div key={step} className="bg-zinc-900/40 border border-zinc-800/40 rounded-xl p-3">
-            <div className="flex items-center gap-2 mb-2">
-              <FunnelStepBadge step={step} />
-              <span className="text-[11px] text-zinc-600">{byStep[step].length} evento{byStep[step].length > 1 ? "s" : ""}</span>
-            </div>
-            <div className="space-y-1">
-              {byStep[step].map((ev) => (
-                <div key={ev.event_name} className="flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2">
-                    <span className="text-zinc-400 font-mono">{ev.event_name}</span>
-                    {ev.is_conversion && (
-                      <span className="text-[10px] font-semibold text-emerald-500/70">candidato a conversão</span>
-                    )}
-                  </div>
-                  <span className="text-zinc-500 font-mono tabular-nums">{fmtN(ev.event_count)}</span>
+      {/* Rate cards */}
+      <div className="grid grid-cols-3 gap-3">
+        <StatCard label="Taxa de Intenção"    value={fmtFunnelPct(intel.intent_rate)}         sub="intenção / sessão"           />
+        <StatCard label="Taxa de Conversão"   value={fmtFunnelPct(intel.conversion_rate)}      sub="conversão / sessão"          />
+        <StatCard label="Intenção→Conversão"  value={fmtFunnelPct(intel.intent_to_conversion)} sub="dos que tiveram intenção"    />
+      </div>
+
+      {/* Stage progression bars */}
+      <div className="space-y-2.5">
+        {intel.stages.filter(s => s.events > 0).map((stage) => {
+          const barPct            = (stage.events / maxEvents) * 100;
+          const withinSemanticPct  = stage.events > 0 ? (stage.semantic_events  / stage.events) * 100 : 100;
+          const withinSuspiciousPct = stage.events > 0 ? (stage.suspicious_events / stage.events) * 100 : 0;
+          const isDropoffSource   = intel.biggest_dropoff?.from_step === stage.step;
+
+          return (
+            <div key={stage.step}>
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center gap-2">
+                  <FunnelStepBadge step={stage.step} />
+                  <span className="text-[11px] text-zinc-500 font-mono tabular-nums">{fmtN(stage.events)}</span>
+                  {isDropoffSource && intel.biggest_dropoff && (
+                    <span className="text-[10px] text-red-400 font-semibold font-mono">
+                      ↓ {fmtFunnelPct(intel.biggest_dropoff.pct)}
+                    </span>
+                  )}
                 </div>
-              ))}
+                {stage.suspicious_events > 0 && (
+                  <span className="text-[10px] text-amber-500/70 font-mono">{fmtN(stage.suspicious_events)} suspeitos</span>
+                )}
+              </div>
+              <div className="w-full h-2 bg-zinc-800/60 rounded-full overflow-hidden">
+                <div className="h-full flex" style={{ width: `${barPct}%` }}>
+                  <div className="h-full bg-indigo-500/60" style={{ width: `${withinSemanticPct}%` }} />
+                  {withinSuspiciousPct > 0 && (
+                    <div className="h-full bg-amber-500/40" style={{ width: `${withinSuspiciousPct}%` }} />
+                  )}
+                </div>
+              </div>
             </div>
+          );
+        })}
+        <div className="flex items-center gap-4 mt-0.5">
+          <div className="flex items-center gap-1.5">
+            <div className="w-3 h-2 bg-indigo-500/60 rounded-sm" />
+            <span className="text-[10px] text-zinc-600">Semântico</span>
           </div>
-        ))}
+          <div className="flex items-center gap-1.5">
+            <div className="w-3 h-2 bg-amber-500/40 rounded-sm" />
+            <span className="text-[10px] text-zinc-600">Nomenclatura suspeita</span>
+          </div>
+        </div>
       </div>
 
-      {data.summary.conversions > 0 && (
-        <p className="text-[11px] text-zinc-600 italic">
-          Eventos candidatos a conversão refletem o mapeamento semântico atual. A conversão definitiva depende de validação explícita do cliente.
-        </p>
+      {/* Biggest dropoff callout */}
+      {intel.biggest_dropoff && (
+        <div className="bg-red-500/5 border border-red-500/20 rounded-xl px-4 py-3">
+          <p className="text-[10px] text-zinc-600 uppercase tracking-wider mb-1">Maior queda no funil</p>
+          <p className="text-sm text-red-300 font-semibold">
+            {FUNNEL_STEP_LABELS[intel.biggest_dropoff.from_step]} → {FUNNEL_STEP_LABELS[intel.biggest_dropoff.to_step]}
+            {" "}
+            <span className="font-mono">{fmtFunnelPct(intel.biggest_dropoff.pct)}</span>
+          </p>
+          <p className="text-[11px] text-zinc-600 font-mono mt-0.5">
+            {fmtN(intel.biggest_dropoff.from_events)} → {fmtN(intel.biggest_dropoff.to_events)} eventos
+          </p>
+        </div>
+      )}
+
+      {/* Suspicious events panel */}
+      {intel.suspicious_events.length > 0 && (
+        <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-4">
+          <p className="text-[10px] text-zinc-600 uppercase tracking-wider mb-2">
+            Eventos fora do padrão GA4 snake_case ({intel.suspicious_events.length})
+          </p>
+          <div className="space-y-1">
+            {intel.suspicious_events.map(ev => (
+              <div key={ev.event_name} className="flex items-center justify-between text-xs">
+                <span className="text-amber-400/80 font-mono">{ev.event_name}</span>
+                <span className="text-zinc-600 font-mono tabular-nums">{fmtN(ev.count)}</span>
+              </div>
+            ))}
+          </div>
+          <p className="text-[10px] text-zinc-600 mt-2 italic">
+            Eventos com letras maiúsculas não seguem a convenção snake_case do GA4 e não estão no registro semântico.
+          </p>
+        </div>
+      )}
+
+      {/* Collapsible raw event list */}
+      <button
+        onClick={() => setShowRawEvents(v => !v)}
+        className="flex items-center gap-2 text-zinc-500 hover:text-zinc-300 text-sm transition-colors"
+      >
+        {showRawEvents ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        <span>Ver lista de eventos por etapa</span>
+        <span className="text-[10px] text-zinc-700">({data.events.length})</span>
+      </button>
+
+      {showRawEvents && (
+        <div className="border border-zinc-800/60 rounded-xl overflow-hidden p-4 space-y-2">
+          {env !== "all" && (
+            <p className="text-[11px] text-zinc-600 italic mb-2">
+              Esta visão usa snapshot agregado de GA4. A segmentação por ambiente depende de evidências de governança disponíveis.
+            </p>
+          )}
+          {FUNNEL_STEP_ORDER
+            .filter(step => data.events.some(e => e.step === step))
+            .map(step => {
+              const stepEvents = data.events.filter(e => e.step === step);
+              return (
+                <div key={step} className="bg-zinc-900/40 border border-zinc-800/40 rounded-xl p-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <FunnelStepBadge step={step} />
+                    <span className="text-[11px] text-zinc-600">{stepEvents.length} evento{stepEvents.length > 1 ? "s" : ""}</span>
+                  </div>
+                  <div className="space-y-1">
+                    {stepEvents.map(ev => (
+                      <div key={ev.event_name} className="flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-2">
+                          <span className={`font-mono ${isSuspiciousEventName(ev.event_name) ? "text-amber-400/80" : "text-zinc-400"}`}>
+                            {ev.event_name}
+                          </span>
+                          {ev.is_conversion && (
+                            <span className="text-[10px] font-semibold text-emerald-500/70">candidato a conversão</span>
+                          )}
+                          {isSuspiciousEventName(ev.event_name) && (
+                            <span className="text-[10px] text-amber-500/60">suspeito</span>
+                          )}
+                        </div>
+                        <span className="text-zinc-500 font-mono tabular-nums">{fmtN(ev.event_count)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          {data.summary.conversions > 0 && (
+            <p className="text-[11px] text-zinc-600 italic pt-1">
+              Eventos candidatos a conversão refletem o mapeamento semântico atual. A conversão definitiva depende de validação explícita do cliente.
+            </p>
+          )}
+        </div>
       )}
     </div>
   );
@@ -927,6 +1058,13 @@ export function GrowthIntelligenceView() {
   const [findings,     setFindings]     = useState<ApiState<GovernanceFindingsResponse>>(initState());
   const [evidence,     setEvidence]     = useState<ApiState<GovernanceEvidenceResponse>>(initState());
 
+  const funnelIntel = useMemo(() => {
+    const events   = funnel.data?.data.events ?? [];
+    const sessions = funnel.data?.data.summary.sessions ?? 0;
+    if (events.length === 0 || sessions === 0) return null;
+    return computeFunnelIntelligence(events, sessions);
+  }, [funnel.data]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -990,7 +1128,7 @@ export function GrowthIntelligenceView() {
         </div>
       )}
 
-      <ExecutiveCards overview={overview} govSummary={govSummary} paidSessions={paidSessions} />
+      <ExecutiveCards overview={overview} govSummary={govSummary} paidSessions={paidSessions} funnelIntel={funnelIntel} />
 
       {/* Envelope warnings (table missing, etc.) */}
       {envelopeWarnings.map((w, i) => (
@@ -1005,7 +1143,7 @@ export function GrowthIntelligenceView() {
       </SectionCard>
 
       <SectionCard title="Funil Semântico" subtitle="ga4_first_light_summary · growth/funnel" icon={TrendingUp}>
-        <FunnelSection state={funnel} env={env} />
+        <FunnelIntelligenceSection state={funnel} funnelIntel={funnelIntel} env={env} />
       </SectionCard>
 
       <SectionCard title="Qualidade de Sessões Pagas" subtitle="data_quality_report · growth/paid-sessions" icon={ShieldCheck}>
