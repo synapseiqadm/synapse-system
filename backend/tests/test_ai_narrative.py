@@ -16,6 +16,7 @@ import sys
 import types
 import unittest
 from unittest.mock import MagicMock, patch
+from dotenv import load_dotenv
 
 # ── Bootstrap: inject a fake config module so ai_narrative doesn't require .env ─
 _mock_config = types.ModuleType("config")
@@ -26,7 +27,12 @@ _CONNECTORS_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), "..",
 if _CONNECTORS_DIR not in sys.path:
     sys.path.insert(0, _CONNECTORS_DIR)
 
-import ai_narrative  # noqa: E402  — must follow path setup
+# Load backend/.env before importing ai_narrative so GEMINI_API_KEY is in os.environ
+# at module-level capture time (GEMINI_API_KEY = os.getenv(...) runs on import).
+_ENV_PATH = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".env"))
+load_dotenv(_ENV_PATH, override=False)
+
+import ai_narrative  # noqa: E402  — must follow path setup and load_dotenv
 from google import genai as _genai_sdk  # noqa: F401 — imported to allow patching
 
 # ── Simulated payload ─────────────────────────────────────────────────────────
