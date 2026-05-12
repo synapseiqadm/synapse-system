@@ -12,8 +12,7 @@ interface NarrativeData {
 }
 
 // ─── Mock — mirrors exact output of ai_narrative.generate_narrative(is_simulated=True)
-// Replace with live API call once GEMINI_API_KEY is configured and fn_campaign_snapshot_delta
-// accumulates 7+ days of daily syncs (expected: 2026-05-13+).
+// Replace with live API call once fn_campaign_snapshot_delta accumulates 7+ days of syncs.
 
 const MOCK_NARRATIVE: NarrativeData = {
   insight_summary:
