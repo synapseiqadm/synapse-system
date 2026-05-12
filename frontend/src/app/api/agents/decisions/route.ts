@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/utils/supabase/server";
 import { DEFAULT_WORKSPACE } from "@/lib/workspace";
 
-// ─── Workspace resolution (same pattern as narrative/route.ts) ────────────────
+// ─── Workspace resolution ─────────────────────────────────────────────────────
 
 async function resolveWorkspace(supabase: Awaited<ReturnType<typeof createClient>>) {
   const { data: { user } } = await supabase.auth.getUser();
@@ -42,6 +42,12 @@ function nowTime(): string {
   return new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 }
 
+const AGENT_NAMES: Record<string, string> = {
+  "growth-master":   "Growth Master",
+  "creative-critic": "Creative Critic",
+  "anomaly-scout":   "Anomaly Scout",
+};
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type DecisionStatus = "pending" | "approved" | "rejected" | "auto-applied";
@@ -49,6 +55,7 @@ type DecisionType   = "analysis" | "suggestion" | "action" | "alert";
 
 interface Decision {
   id:        number;
+  dbId?:     string;
   agentId:   string;
   agentName: string;
   type:      DecisionType;
@@ -72,7 +79,32 @@ export async function GET() {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
 
-    // Fetch campaign data and KPI anomaly events in parallel
+    // ── Try persisted agent_decisions first ──────────────────────────────────
+    const { data: dbRows } = await supabase
+      .from("agent_decisions")
+      .select("id, agent_id, type, title, body, rationale, impact_value, status, created_at")
+      .eq("workspace_id", workspace.id)
+      .order("created_at", { ascending: false })
+      .limit(50);
+
+    if (dbRows && dbRows.length > 0) {
+      const decisions: Decision[] = dbRows.map((row, idx) => ({
+        id:        idx + 1,
+        dbId:      row.id as string,
+        agentId:   row.agent_id as string,
+        agentName: AGENT_NAMES[row.agent_id as string] ?? row.agent_id,
+        type:      row.type as DecisionType,
+        title:     row.title as string,
+        body:      row.body as string,
+        timestamp: fmtTime(row.created_at as string),
+        status:    row.status as DecisionStatus,
+        value:     row.impact_value as string | undefined,
+        rationale: row.rationale as string | undefined,
+      }));
+      return NextResponse.json({ ok: true, data: decisions });
+    }
+
+    // ── Fallback: on-the-fly derivation from campaign_summary ────────────────
     const [campaignResult, eventsResult] = await Promise.all([
       supabase
         .from("campaign_summary")
@@ -90,7 +122,6 @@ export async function GET() {
         .limit(10),
     ]);
 
-    // Deduplicate campaigns — keep most recent snapshot per campaign_name
     const seen = new Set<string>();
     const campaigns: Array<{ campaign_name: string; cost: number; conversions: number }> = [];
     for (const row of campaignResult.data ?? []) {
@@ -104,7 +135,6 @@ export async function GET() {
       }
     }
 
-    // Derive zero-conversion campaigns (P1 — Dreno de Verba)
     const zeroConv   = campaigns.filter((c) => c.cost > 0 && c.conversions === 0);
     const totalWaste = zeroConv.reduce((sum, c) => sum + c.cost, 0);
 
@@ -112,7 +142,6 @@ export async function GET() {
     let   idSeq = 1;
     const ts    = nowTime();
 
-    // ── Zero-conversion alert ────────────────────────────────────────────────
     if (zeroConv.length > 0) {
       const names    = zeroConv.map((c) => `${c.campaign_name} (R$${fmtBRL(c.cost)})`);
       const listHead = names.slice(0, 5).join("; ");
@@ -132,7 +161,6 @@ export async function GET() {
         rationale: `Critério: spend > 0 AND conversions = 0. Classificação P1 — DRENO DE VERBA.${isCritical ? ` Total > R$500 → priority_score = 5 (CRÍTICO).` : ""}`,
       });
 
-      // Recommended action card (advisory only — governance guard)
       decisions.push({
         id:        idSeq++,
         agentId:   "anomaly-scout",
@@ -147,15 +175,14 @@ export async function GET() {
       });
     }
 
-    // ── KPI anomalies from operational_events ────────────────────────────────
     for (const evt of eventsResult.data ?? []) {
       const scope = (evt.impact_scope ?? {}) as Record<string, unknown>;
-      const metric      = String(scope.metric ?? "roas").toUpperCase();
-      const devPct      = typeof scope.deviation_pct === "number" ? scope.deviation_pct : 0;
-      const lastVal     = typeof scope.last_value    === "number" ? scope.last_value.toFixed(2)  : "—";
-      const meanVal     = typeof scope.mean_value    === "number" ? scope.mean_value.toFixed(2)  : "—";
-      const lookback    = typeof scope.lookback_days === "number" ? scope.lookback_days : 30;
-      const sign        = devPct >= 0 ? "+" : "";
+      const metric   = String(scope.metric ?? "roas").toUpperCase();
+      const devPct   = typeof scope.deviation_pct === "number" ? scope.deviation_pct : 0;
+      const lastVal  = typeof scope.last_value    === "number" ? scope.last_value.toFixed(2)  : "—";
+      const meanVal  = typeof scope.mean_value    === "number" ? scope.mean_value.toFixed(2)  : "—";
+      const lookback = typeof scope.lookback_days === "number" ? scope.lookback_days : 30;
+      const sign     = devPct >= 0 ? "+" : "";
 
       decisions.push({
         id:        idSeq++,

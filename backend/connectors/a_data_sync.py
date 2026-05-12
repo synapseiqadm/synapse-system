@@ -35,6 +35,7 @@ from data_quality import run_data_quality_checks, write_quality_reports
 from insights import generate_insights, write_insights, resolve_obsolete_insights
 from semantic_governance import load_measurement_config
 from operational_events import record_operational_event, detect_kpi_anomaly
+from agent_decisions import generate_agent_decisions
 
 
 def main(dry_run: bool = False) -> None:
@@ -293,6 +294,37 @@ def main(dry_run: bool = False) -> None:
             sys.exit(1)
     else:
         print("[insights] ENABLE_INSIGHTS=false - skipping", flush=True)
+
+    # ── agent decisions ────────────────────────────────────────────────────
+    try:
+        camp_res = (
+            supabase.table("campaign_summary")
+            .select("campaign_name,roas,cost,conversions")
+            .eq("workspace_id", WOKE_WORKSPACE_ID)
+            .order("date", desc=True)
+            .execute()
+        )
+        # Deduplicate: keep most-recent row per campaign_name
+        seen: set[str] = set()
+        campaign_rows: list[dict] = []
+        for r in (camp_res.data or []):
+            nm = r.get("campaign_name", "")
+            if nm and nm not in seen:
+                seen.add(nm)
+                campaign_rows.append(r)
+
+        snap_res = supabase.rpc("fn_campaign_snapshot_delta", {"p_workspace_id": WOKE_WORKSPACE_ID}).execute()
+        snapshot_rows: list[dict] = snap_res.data or []
+
+        generate_agent_decisions(
+            supabase,
+            workspace_id  = WOKE_WORKSPACE_ID,
+            campaign_rows = campaign_rows,
+            snapshot_rows = snapshot_rows,
+            dry_run       = dry_run,
+        )
+    except Exception as exc:
+        print(f"[agent_decisions] ERROR (non-fatal): {exc}", flush=True)
 
     print(
         f"[a_data_sync] done - campaigns={n_campaigns} kpi={n_kpi} keywords={n_keywords}",

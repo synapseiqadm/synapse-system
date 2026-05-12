@@ -17,6 +17,7 @@ export type DecisionStatus = "pending" | "approved" | "rejected" | "auto-applied
 
 export interface Decision {
   id: number;
+  dbId?: string;
   agentId: string;
   agentName: string;
   type: DecisionType;
@@ -56,11 +57,30 @@ interface AgentDecisionFeedProps {
 }
 
 export function AgentDecisionFeed({ decisions, filterAgentId }: AgentDecisionFeedProps) {
-  const [states, setStates]       = useState<Record<number, DecisionStatus>>({});
+  const [states, setStates]         = useState<Record<number, DecisionStatus>>({});
+  const [feedback, setFeedback]     = useState<Record<number, string>>({});
   const [typeFilter, setTypeFilter] = useState<DecisionType | "all">("all");
 
-  const resolve = (id: number, status: "approved" | "rejected") => {
-    setStates((s) => ({ ...s, [id]: status }));
+  const resolve = async (d: Decision, status: "approved" | "rejected") => {
+    setStates((s) => ({ ...s, [d.id]: status }));
+
+    if (d.dbId) {
+      try {
+        const res = await fetch("/api/agents/action", {
+          method:  "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body:    JSON.stringify({ dbId: d.dbId, status }),
+        });
+        if (res.ok && status === "approved") {
+          setFeedback((f) => ({
+            ...f,
+            [d.id]: "Aprovado ✓ — Aguardando implementação de API Google Ads",
+          }));
+        }
+      } catch {
+        // status already set optimistically; silent on network error
+      }
+    }
   };
 
   const getStatus = (d: Decision): DecisionStatus => states[d.id] ?? d.status;
@@ -191,13 +211,13 @@ export function AgentDecisionFeed({ decisions, filterAgentId }: AgentDecisionFee
                 {isPending && (d.type === "suggestion" || d.type === "action") && (
                   <div className="flex gap-2 mt-2">
                     <button
-                      onClick={() => resolve(d.id, "approved")}
+                      onClick={() => resolve(d, "approved")}
                       className="flex-1 flex items-center justify-center gap-1.5 py-1.5 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/25 rounded-lg text-[11px] text-emerald-400 font-semibold transition-colors"
                     >
                       <CheckCircle2 size={11} /> Aprovar
                     </button>
                     <button
-                      onClick={() => resolve(d.id, "rejected")}
+                      onClick={() => resolve(d, "rejected")}
                       className="flex-1 flex items-center justify-center gap-1.5 py-1.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-lg text-[11px] text-red-400 font-semibold transition-colors"
                     >
                       <XCircle size={11} /> Rejeitar
@@ -210,7 +230,9 @@ export function AgentDecisionFeed({ decisions, filterAgentId }: AgentDecisionFee
                   <div className={`flex items-center gap-1.5 text-[10px] font-semibold mt-1
                     ${isApproved ? "text-emerald-400" : "text-slate-600"}`}>
                     {isApproved ? <CheckCircle2 size={11} /> : <XCircle size={11} />}
-                    {status === "auto-applied" ? "Aplicado automaticamente" : isApproved ? "Aprovado" : "Rejeitado"}
+                    {feedback[d.id] ?? (
+                      status === "auto-applied" ? "Aplicado automaticamente" : isApproved ? "Aprovado" : "Rejeitado"
+                    )}
                   </div>
                 )}
               </div>
