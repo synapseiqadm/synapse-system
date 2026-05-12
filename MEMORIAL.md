@@ -2951,3 +2951,176 @@ AgentDecisionFeed → cards com rationale + approve/reject actions
 | `frontend/src/components/AgentDecisionFeed.tsx` | Modificado | `rationale?: string` na interface + chip de renderização |
 | `frontend/src/components/AINarrativeCard.tsx` | Modificado | Link "Ver no Centro de Operações" no rodapé |
 | `frontend/src/components/Sidebar.tsx` | Modificado | Badge "Preview" removido; destructuring limpo |
+
+---
+
+## v2.2 — Persistência, Memória e Activação Multi-Agente
+
+**Data:** Maio 2026  
+**Commit:** `8de1bbd` — `feat(v2.2): persistence, memory & multi-agent activation`  
+**Status:** ✅ Concluída
+
+### Objectivo
+
+Transformar os agentes de diagnóstico em agentes com memória persistente: as decisões passam a ser gravadas na base de dados, preservando o status `approved`/`rejected` entre execuções de sync. Growth Master e Creative Critic estreiam com lógica própria. O fluxo Aprovar/Rejeitar passa a ser persistido via API.
+
+---
+
+### 2.2.1 — Tabela `agent_decisions` (Migration 014)
+
+**Arquivo:** `supabase/migrations/014_agent_decisions.sql`  
+**Aplicada ao projecto:** `lasocsneburvtxqgqhie`
+
+Schema:
+
+| Coluna | Tipo | Notas |
+|---|---|---|
+| `id` | UUID PK | `gen_random_uuid()` |
+| `workspace_id` | UUID NOT NULL | Partição multi-tenant |
+| `agent_id` | TEXT | `growth-master` · `creative-critic` · `anomaly-scout` |
+| `type` | TEXT | `analysis` · `suggestion` · `action` · `alert` |
+| `title` | TEXT | Título do card |
+| `body` | TEXT | Diagnóstico para o gestor |
+| `rationale` | TEXT | Raciocínio técnico (auditabilidade) |
+| `impact_value` | TEXT | Impacto financeiro ou métrico estimado |
+| `status` | TEXT DEFAULT `'pending'` | `pending` · `approved` · `rejected` · `auto-applied` |
+| `metadata` | JSONB | Payload heterogéneo por agente |
+| `dedupe_key` | TEXT | Chave de deduplicação por decisão |
+| `created_at` | TIMESTAMPTZ | Timestamp de inserção |
+| `updated_at` | TIMESTAMPTZ | Actualizado pelo trigger |
+| UNIQUE | `(workspace_id, dedupe_key)` | Impede duplicados cross-sync |
+
+**Trigger `preserve_agent_decision_status`:** em qualquer UPDATE, se `OLD.status ≠ 'pending'`, devolve o status antigo — impede que re-syncs resetem decisões já accionadas pelo gestor. Atualiza sempre `updated_at`.
+
+**RLS:**
+- SELECT: `TO authenticated USING (workspace_id = profiles.workspace_id)`
+- UPDATE: `TO authenticated USING + WITH CHECK (workspace_id = profiles.workspace_id)`
+- `GRANT SELECT, UPDATE TO authenticated`
+
+---
+
+### 2.2.2 — Motor Multi-Agente (`agent_decisions.py`)
+
+**Arquivo:** `backend/connectors/agent_decisions.py`
+
+Função principal: `generate_agent_decisions(supabase, workspace_id, campaign_rows, snapshot_rows, dry_run=False) -> int`
+
+#### Growth Master
+- **Critério:** `roas ≥ 3.0x AND cost ≥ R$50`
+- **Tipo:** `suggestion`
+- **Acção sugerida:** aumentar budget em 20% (estimativa conservadora)
+- **dedupe_key:** `f"growth-master-scale-{campaign_name}"`
+- **metadata:** `roas`, `current_cost`, `budget_increase_pct: 20`, `projected_gain_brl`
+
+#### Creative Critic
+- **Critério:** `metric_name == 'ctr' AND delta_percentage ≤ −15%` (de `fn_campaign_snapshot_delta`)
+- **Tipo:** `suggestion`
+- **Acção sugerida:** pausar criativos de baixo desempenho e testar novos ângulos
+- **dedupe_key:** `f"creative-critic-ctr-{campaign_name}"`
+- **metadata:** `ctr_now`, `ctr_then`, `delta_pct`
+
+#### Anomaly Scout
+- **Critério:** `cost > 0 AND conversions == 0`
+- **Tipos:** `alert` + `suggestion` (dois cards)
+- **dedupe_keys:** `"anomaly-scout-zero-conv"` e `"anomaly-scout-zero-conv-suggestion"`
+- **P1 CRÍTICO:** `total_waste ≥ R$500` → `is_critical: true` em metadata
+- **Governance guard:** body/rationale da suggestion inclui "advisory only" e "sujeito à aprovação do gestor"
+
+#### Estratégia insert-only
+1. Fetch `agent_decisions.dedupe_key WHERE workspace_id = workspace_id`
+2. Filtra decisões não presentes → inserir apenas novas
+3. Status de decisões aprovadas/rejeitadas nunca é sobrescrito
+
+---
+
+### 2.2.3 — Integração no Pipeline (`a_data_sync.py`)
+
+Adicionado ao final de `main()`, após a etapa de insights:
+
+```python
+from agent_decisions import generate_agent_decisions
+
+# Query campaign_summary — deduplica por campaign_name (mais recente)
+camp_res = supabase.table("campaign_summary")
+    .select("campaign_name,roas,cost,conversions")
+    .eq("workspace_id", WOKE_WORKSPACE_ID)
+    .order("date", desc=True).execute()
+
+# Deduplica por campaign_name
+seen = set(); campaign_rows = []
+for r in (camp_res.data or []):
+    if r["campaign_name"] not in seen:
+        seen.add(r["campaign_name"]); campaign_rows.append(r)
+
+# fn_campaign_snapshot_delta para Creative Critic
+snap_res = supabase.rpc("fn_campaign_snapshot_delta", {"p_workspace_id": WOKE_WORKSPACE_ID}).execute()
+snapshot_rows = snap_res.data or []
+
+generate_agent_decisions(supabase, WOKE_WORKSPACE_ID, campaign_rows, snapshot_rows, dry_run)
+```
+
+Erros são não-fatais (`print WARNING`) — nunca aborta o pipeline.
+
+---
+
+### 2.2.4 — `/api/agents/decisions` (Actualização)
+
+O route handler agora:
+1. **Primário:** lê `agent_decisions` (filtra por `workspace_id`, ordena por `created_at DESC`, limit 50)
+2. Se tabela tem rows → mapeia para `Decision[]` com `dbId: row.id` (UUID) para resolver via API
+3. **Fallback:** se tabela vazia → derivação on-the-fly de `campaign_summary` + `operational_events` (comportamento anterior preservado)
+
+Mapa `agent_id → agentName`:
+- `growth-master` → "Growth Master"
+- `creative-critic` → "Creative Critic"
+- `anomaly-scout` → "Anomaly Scout"
+
+---
+
+### 2.2.5 — `/api/agents/action` (Nova Rota)
+
+**Arquivo:** `frontend/src/app/api/agents/action/route.ts`
+
+PATCH handler que:
+1. Resolve workspace da sessão
+2. Valida `{ dbId: string, status: "approved" | "rejected" }` no body
+3. Executa `.update({ status }).eq("id", dbId).eq("workspace_id", workspaceId)`
+4. Retorna `{ ok: true }`
+
+O trigger DB `preserve_agent_decision_status` actua como defesa em profundidade — mesmo que a RLS falhe, o trigger impede regressão de status.
+
+---
+
+### 2.2.6 — `AgentDecisionFeed` (Actualização)
+
+- `Decision.dbId?: string` adicionado à interface
+- `resolve()` convertida para `async`:
+  - Update optimista de estado local (imediato)
+  - Se `d.dbId` presente → `PATCH /api/agents/action` em background
+  - Se `res.ok && status === "approved"` → feedback `"Aprovado ✓ — Aguardando implementação de API Google Ads"`
+- Estado `feedback: Record<number, string>` rastreia mensagem por card
+
+---
+
+### 2.2.7 — Estado pós-v2.2
+
+| Dimensão | Antes (v2.1.5) | Depois (v2.2) |
+|---|---|---|
+| Persistência de decisões | Derivadas on-the-fly | Gravadas em `agent_decisions` com insert-only |
+| Status Aprovar/Rejeitar | Só UI local (sem backend) | Persistido em DB via `/api/agents/action` |
+| Agentes activos | Só Anomaly Scout | Growth Master + Creative Critic + Anomaly Scout |
+| Creative Critic | Não existia | CTR drop > 15% D-1 vs D-8 via `fn_campaign_snapshot_delta` |
+| Growth Master | Não existia | ROAS ≥ 3.0x + spend ≥ R$50 → suggest 20% scale |
+| Feedback de aprovação | "Aprovado" genérico | "Aprovado ✓ — Aguardando implementação de API Google Ads" |
+| Trigger de proteção | Não existia | `preserve_agent_decision_status` em DB |
+
+### Arquivos criados/modificados
+
+| Arquivo | Tipo | O que mudou |
+|---|---|---|
+| `supabase/migrations/014_agent_decisions.sql` | **Novo** | Tabela + trigger + RLS + índices |
+| `backend/connectors/agent_decisions.py` | **Novo** | Motor multi-agente — Growth Master, Creative Critic, Anomaly Scout |
+| `backend/connectors/a_data_sync.py` | Modificado | Import + chamada `generate_agent_decisions()` no final do pipeline |
+| `frontend/src/app/api/agents/decisions/route.ts` | Modificado | Lê `agent_decisions` primeiro; fallback on-the-fly; `dbId` no output |
+| `frontend/src/app/api/agents/action/route.ts` | **Novo** | PATCH — persiste `approved`/`rejected` em `agent_decisions` |
+| `frontend/src/components/AgentDecisionFeed.tsx` | Modificado | `dbId`, async `resolve()`, feedback de aprovação |
