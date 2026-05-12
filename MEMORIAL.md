@@ -2181,23 +2181,26 @@ Implementação do Snapshot Engine (SQL) para análise comparativa D-1 vs D-8 co
 
 ### v1.9.2 — Narrative Generator: AI Diagnostic Layer ✅ CONCLUÍDA
 
-**Data de conclusão:** 2026-05-12
+**Data de conclusão:** 2026-05-12  
+**Commit:** `1d511ad` — `feat(ai): high-resolution narrative engine with funnel analysis (v1.9.2)`  
+**Status:** IA integrada com suporte a funil completo (CTR/CPC), aguardando implementação de UI.
 
-Camada de inteligência que traduz os deltas numéricos da v1.9.1 em narrativas diagnósticas acionáveis via Google Gemini 1.5.
+Camada de inteligência que traduz os deltas numéricos da v1.9.1 em narrativas diagnósticas acionáveis via Google Gemini 1.5. Refatorada em duas iterações: geração básica (spend/conversions/cpa) → alta resolução com padrões de funil completo (CTR/CPC).
 
 #### O que foi entregue
 
 - Módulo `backend/connectors/ai_narrative.py` — integração com a SDK `google-genai` (v2.0.1):
-  - `SYSTEM_PROMPT` rigoroso: persona "Senior Growth Analyst", biblioteca de padrões causais (Spend↑+Conversões↓→saturação, etc.), restrição explícita a metrics disponíveis (spend, conversions, cpa), output JSON-only
-  - `generate_narrative(snapshot_rows, workspace_name)` — chama `gemini-1.5-flash` com `response_mime_type="application/json"`, `temperature=0.2`, valida os 4 campos obrigatórios, anexa `_meta` (model, latency_ms, row_count)
+  - `SYSTEM_PROMPT` com **biblioteca de padrões causais de alta resolução**:
+    - **HIGH-RESOLUTION** (quando CTR/CPC presentes): 6 padrões — fadiga criativa, inflação de leilão, quebra pós-clique, paradoxo de cliques baratos, ciclo virtuoso, queda de impressões
+    - **BASELINE** (quando CTR/CPC ausentes): 7 padrões spend/conversions/cpa clássicos
+    - Mandato explícito: `technical_diagnosis` DEVE citar CTR ou CPC quando presentes no input
+  - `generate_narrative(snapshot_rows, workspace_name)` — chama `gemini-1.5-flash` com `response_mime_type="application/json"`, `temperature=0.2`, valida 4 campos obrigatórios, anexa `_meta`
   - Guard de `GEMINI_API_KEY` ausente com mensagem acionável
-- Suite de testes `backend/tests/test_ai_narrative.py`:
-  - `test_mock_pipeline` — pipeline completo com resposta mockada, imprime input/output completo
-  - `test_missing_api_key_raises` — verifica `EnvironmentError` sem chave
-  - `test_invalid_json_raises` — verifica `ValueError` em resposta não-JSON
-  - `test_missing_field_raises` — verifica `KeyError` em JSON incompleto
-  - `test_live_api_call` — chamada real ao Gemini (skip automático se `GEMINI_API_KEY` ausente)
-- SDK instalada no venv: `google-genai==2.0.1`
+- Suite de testes `backend/tests/test_ai_narrative.py` (10 rows, HIGH-RESOLUTION):
+  - Payload atualizado com CTR e CPC — padrão A: `CPA↑+CTR↓+CPC≈` (fadiga criativa), padrão B: `CPC↓+CTR↑+Conversions↑` (ciclo virtuoso)
+  - `test_mock_pipeline` — valida que `technical_diagnosis` cita CTR (34.93% queda) e CPC (R$1.98→R$1.35)
+  - `test_missing_api_key_raises`, `test_invalid_json_raises`, `test_missing_field_raises`, `test_live_api_call`
+- `docs/sql/fn_campaign_snapshot_delta.sql` atualizado para v3 (rolling window + alias fix)
 
 #### Resultado de execução (sandbox — mock mode)
 
@@ -2209,14 +2212,17 @@ Camada de inteligência que traduz os deltas numéricos da v1.9.1 em narrativas 
 
 | Arquivo | Tipo | Descrição |
 |---|---|---|
-| `backend/connectors/ai_narrative.py` | Módulo Python | Integração Gemini + system prompt |
-| `backend/tests/test_ai_narrative.py` | Teste Python | Suite 5 testes (4 mock + 1 live) |
+| `backend/connectors/ai_narrative.py` | Módulo Python | Integração Gemini + HIGH-RESOLUTION system prompt |
+| `backend/tests/test_ai_narrative.py` | Teste Python | 10 rows com CTR/CPC, 4 mock + 1 live |
+| `docs/sql/fn_campaign_snapshot_delta.sql` | SQL doc | v3 rolling window, alias fix, 6 métricas |
 
 #### Observações técnicas registradas
 
-- `GEMINI_API_KEY` não está no `.env` — live mode requer chave gratuita de `aistudio.google.com/app/apikey`. Adicionar `GEMINI_API_KEY=<chave>` ao `backend/.env`.
-- SDK `google.generativeai` (legado) está deprecated; migração para `google.genai` já aplicada.
+- `fn_campaign_snapshot_delta` retorna vazio até que existam 7+ dias de syncs diários acumulados (D-8 ainda sem dados). Comportamento esperado; a função produzirá resultados reais a partir de 2026-05-13.
+- `GEMINI_API_KEY` não está no `.env` — live mode requer chave gratuita de `aistudio.google.com/app/apikey`.
+- SDK `google.generativeai` (legado) deprecated; migração para `google.genai` já aplicada.
 - `temperature=0.2` garante output consistente e factual; subir para 0.4 se narrativas soarem repetitivas.
+- Evidência visual no frontend planejada para **v1.7.4**.
 
 ### v1.8.1/4 — Saneamento de Base: Schema & Snapshot Engine ✅ CONCLUÍDA
 
