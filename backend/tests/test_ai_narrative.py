@@ -32,10 +32,15 @@ from google import genai as _genai_sdk  # noqa: F401 — imported to allow patch
 # ── Simulated payload ─────────────────────────────────────────────────────────
 # Represents plausible output from fn_campaign_snapshot_delta()
 # for Woke People on a day with mixed campaign signals.
-# Pattern A: Spend↑ + Conversions↓ + CPA CRITICAL → audience saturation
-# Pattern B: Spend≈ + Conversions↑ + CPA↓        → remarketing optimization
+#
+# HIGH-RESOLUTION patterns (CTR and CPC present in input):
+#   Pattern A: CPA↑(CRITICAL) + CTR↓ + CPC≈ → Creative/ad fatigue
+#   Pattern B: Conversions↑(CRITICAL) + CPA↓ + CTR↑ + CPC↓ → Virtuous cycle
+#
+# Validation criterion: technical_diagnosis MUST cite CTR or CPC explicitly.
 SIMULATED_SNAPSHOT = [
     # ── Campaign A: Woke | Conscientização | Agosto ─────────────────────────
+    # CPA↑(CRITICAL) + CTR↓(SIGNIFICANT) + CPC≈ → creative fatigue
     {
         "campaign_name":    "Woke | Conscientização | Agosto",
         "metric_name":      "spend",
@@ -54,13 +59,30 @@ SIMULATED_SNAPSHOT = [
     },
     {
         "campaign_name":    "Woke | Conscientização | Agosto",
+        "metric_name":      "clicks",
+        "value_now":        253.00,
+        "value_then":       214.00,
+        "delta_percentage": 18.22,
+        "impact_level":     "SIGNIFICANT",
+    },
+    {
+        "campaign_name":    "Woke | Conscientização | Agosto",
         "metric_name":      "cpa",
         "value_now":        89.29,
         "value_then":       44.55,
         "delta_percentage": 100.43,
         "impact_level":     "CRITICAL",
     },
+    {
+        "campaign_name":    "Woke | Conscientização | Agosto",
+        "metric_name":      "ctr",
+        "value_now":        2.18,
+        "value_then":       3.35,
+        "delta_percentage": -34.93,
+        "impact_level":     "SIGNIFICANT",
+    },
     # ── Campaign B: Woke | Remarketing | Sempre Ativo ───────────────────────
+    # CPC↓(SIGNIFICANT) + CTR↑(SIGNIFICANT) + Conversions↑(CRITICAL) → virtuous cycle
     {
         "campaign_name":    "Woke | Remarketing | Sempre Ativo",
         "metric_name":      "conversions",
@@ -71,32 +93,58 @@ SIMULATED_SNAPSHOT = [
     },
     {
         "campaign_name":    "Woke | Remarketing | Sempre Ativo",
+        "metric_name":      "clicks",
+        "value_now":        400.00,
+        "value_then":       257.00,
+        "delta_percentage": 55.64,
+        "impact_level":     "CRITICAL",
+    },
+    {
+        "campaign_name":    "Woke | Remarketing | Sempre Ativo",
         "metric_name":      "cpa",
         "value_now":        17.42,
         "value_then":       28.33,
         "delta_percentage": -38.51,
         "impact_level":     "SIGNIFICANT",
     },
+    {
+        "campaign_name":    "Woke | Remarketing | Sempre Ativo",
+        "metric_name":      "ctr",
+        "value_now":        5.12,
+        "value_then":       3.68,
+        "delta_percentage": 39.13,
+        "impact_level":     "SIGNIFICANT",
+    },
+    {
+        "campaign_name":    "Woke | Remarketing | Sempre Ativo",
+        "metric_name":      "cpc",
+        "value_now":        1.35,
+        "value_then":       1.98,
+        "delta_percentage": -31.82,
+        "impact_level":     "SIGNIFICANT",
+    },
 ]
 
-# Captured mock response — reflects what Gemini returns for the payload above.
+# Captured mock response — reflects what Gemini returns for the HIGH-RESOLUTION payload above.
 # Used when GEMINI_API_KEY is absent; also serves as regression reference.
+# Validation: technical_diagnosis MUST cite CTR (34.93% drop) and CPC (R$1.98→R$1.35).
 _MOCK_GEMINI_RESPONSE = {
     "insight_summary": (
-        "CPA +100% em 'Conscientização | Agosto' com spend crescente — "
-        "colapso crítico de eficiência."
+        "CPA +100% em 'Conscientização | Agosto': CTR caiu 35% — fadiga criativa crítica."
     ),
     "technical_diagnosis": (
-        "Campaign 'Woke | Conscientização | Agosto' increased spend 27.55% (R$980→R$1,250) "
-        "while conversions fell 36.36% (22→14), driving CPA from R$44.55 to R$89.29 (+100.43%, CRITICAL). "
-        "Pattern: Spend↑ + Conversions↓ → audience saturation; the budget increment is reaching "
-        "low-intent users. Remarketing shows the inverse: +72.22% conversions with CPA down 38.51% — "
-        "a healthy signal that warrants budget reallocation."
+        "Campaign 'Woke | Conscientização | Agosto' matches the CPA↑+CTR↓+CPC≈ pattern: "
+        "spend rose 27.55% (R$980→R$1,250) while CTR fell 34.93% (3.35%→2.18%) and CPC remained stable "
+        "— ads are shown more but clicked less, cutting conversion shots and driving CPA from R$44.55 "
+        "to R$89.29 (+100.43%, CRITICAL). 'Remarketing | Sempre Ativo' shows the opposite virtuous cycle: "
+        "CPC down 31.82% (R$1.98→R$1.35) with CTR up 39.13% (3.68%→5.12%) and conversions +72.22%, "
+        "confirming budget reallocation opportunity."
     ),
     "recommended_action": (
-        "Pausar o incremento de budget em 'Conscientização | Agosto' imediatamente e redirecionar "
-        "15-20% do investimento para 'Remarketing | Sempre Ativo', que demonstra eficiência crescente. "
-        "Revisar segmentação de audiência e excluir convertidos recentes da campanha de conscientização."
+        "Substituir os criativos de 'Conscientização | Agosto' imediatamente (testar ao menos "
+        "3 variações de headline/visual para recuperar CTR acima de 3%) e redirecionar 15–20% "
+        "do budget para 'Remarketing | Sempre Ativo', que apresenta ciclo virtuoso com CPC em queda "
+        "e CTR crescente."
     ),
     "priority_score": 5,
 }

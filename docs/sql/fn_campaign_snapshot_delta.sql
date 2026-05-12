@@ -1,18 +1,23 @@
 -- ============================================================
 -- fn_campaign_snapshot_delta.sql
--- SynapseIQ v1.9.1-REV — Snapshot Engine: SQL Delta Logic
+-- SynapseIQ v1.9.2 — Snapshot Engine: SQL Delta Logic
 --
 -- REVISION HISTORY
---   v1.9.1  : Initial — spend, conversions, cpa
---   v1.9.1-REV: Adds clicks, ctr (%), cpc — requires migration 012
+--   v1.9.1        : Initial — spend, conversions, cpa (daily grain)
+--   v1.9.1-REV    : Adds clicks, ctr (%), cpc — requires migration 012
+--   v1.9.2 (v3)   : Rolling-window support + ambiguity fix (migration 012)
 --
--- Compares campaign performance between two periods:
---   Period A (date_a) : D-1  — Yesterday
---   Period B (date_b) : D-8  — Same weekday, prior week
+-- Compares campaign performance between two rolling 30-day windows:
+--   Period A (date_a) : MAX(date_range_end) — most recent sync
+--   Period B (date_b) : date_a - 7          — equivalent window, 7 days prior
+--
+-- Periods are resolved dynamically from available data.
+-- If date_b has no rows, the function returns an empty result set
+-- (expected behaviour early in deployment before 7 days of syncs exist).
 --
 -- Source table : public.campaign_summary
--- Grain assumed: one row per (workspace_id, campaign_id, date)
---   i.e. date_range_start = date_range_end = target_date
+-- Grain assumed: one row per (workspace_id, campaign_id, date_range_end)
+--   i.e. rolling 30-day windows synced daily via sync_ads.py
 --
 -- Available metrics:
 --   spend       — SUM(cost)
@@ -52,39 +57,53 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-    date_a DATE := CURRENT_DATE - 1;  -- D-1 : Yesterday
-    date_b DATE := CURRENT_DATE - 8;  -- D-8 : Same weekday, prior week
+    date_a DATE;
+    date_b DATE;
 BEGIN
+    -- Resolve the most recent rolling window available for this workspace.
+    SELECT MAX(cs.date_range_end) INTO date_a
+    FROM public.campaign_summary cs
+    WHERE cs.workspace_id = target_workspace_id
+      AND cs.is_mock = FALSE;
+
+    -- No data at all — return empty.
+    IF date_a IS NULL THEN
+        RETURN;
+    END IF;
+
+    -- Comparison period: same window shifted 7 days back.
+    -- If this period has no rows, the function returns empty (expected early in deployment).
+    date_b := date_a - 7;
+
     RETURN QUERY
     WITH period_a AS (
-        -- Aggregate all rows for the workspace on D-1
+        -- Aggregate all campaigns for the workspace on the latest window.
+        -- Uses cname alias to avoid ambiguity with RETURNS TABLE column.
         SELECT
-            cs.campaign_name,
+            cs.campaign_name                                      AS cname,
             SUM(cs.cost)                                          AS spend,
             SUM(cs.conversions)                                   AS conversions,
             SUM(cs.clicks)                                        AS clicks,
             SUM(cs.impressions)                                   AS impressions
         FROM public.campaign_summary cs
-        WHERE cs.workspace_id    = target_workspace_id
-          AND cs.date_range_start = date_a
-          AND cs.date_range_end   = date_a
-          AND cs.is_mock          = FALSE
+        WHERE cs.workspace_id   = target_workspace_id
+          AND cs.date_range_end = date_a
+          AND cs.is_mock        = FALSE
         GROUP BY cs.campaign_name
     ),
 
     period_b AS (
-        -- Aggregate all rows for the workspace on D-8
+        -- Aggregate all campaigns for the workspace on the D-7 window.
         SELECT
-            cs.campaign_name,
+            cs.campaign_name                                      AS cname,
             SUM(cs.cost)                                          AS spend,
             SUM(cs.conversions)                                   AS conversions,
             SUM(cs.clicks)                                        AS clicks,
             SUM(cs.impressions)                                   AS impressions
         FROM public.campaign_summary cs
-        WHERE cs.workspace_id    = target_workspace_id
-          AND cs.date_range_start = date_b
-          AND cs.date_range_end   = date_b
-          AND cs.is_mock          = FALSE
+        WHERE cs.workspace_id   = target_workspace_id
+          AND cs.date_range_end = date_b
+          AND cs.is_mock        = FALSE
         GROUP BY cs.campaign_name
     ),
 
@@ -93,7 +112,7 @@ BEGIN
         -- Campaigns with spend = 0 in BOTH periods are excluded.
         -- CTR is computed from aggregated clicks/impressions (CTR is non-additive).
         SELECT
-            COALESCE(a.campaign_name, b.campaign_name)::TEXT AS campaign_name,
+            COALESCE(a.cname, b.cname)::TEXT AS cname,
 
             -- Spend
             COALESCE(a.spend,        0) AS spend_now,
@@ -118,7 +137,7 @@ BEGIN
                  ELSE NULL END AS ctr_then
 
         FROM period_a  a
-        FULL OUTER JOIN period_b b USING (campaign_name)
+        FULL OUTER JOIN period_b b ON a.cname = b.cname
         WHERE NOT (COALESCE(a.spend, 0) = 0 AND COALESCE(b.spend, 0) = 0)
     ),
 
@@ -126,22 +145,22 @@ BEGIN
         -- Unpivot to one row per (campaign, metric)
 
         -- spend
-        SELECT campaign_name, 'spend'::TEXT       AS metric_name,
-               spend_now  AS value_now, spend_then  AS value_then
+        SELECT cname, 'spend'::TEXT       AS mname,
+               spend_now  AS vnow, spend_then  AS vthen
         FROM combined
 
         UNION ALL
 
         -- conversions
-        SELECT campaign_name, 'conversions'::TEXT AS metric_name,
-               conv_now   AS value_now, conv_then   AS value_then
+        SELECT cname, 'conversions'::TEXT AS mname,
+               conv_now   AS vnow, conv_then   AS vthen
         FROM combined
 
         UNION ALL
 
         -- clicks — excluded when 0 in both periods (no signal)
-        SELECT campaign_name, 'clicks'::TEXT      AS metric_name,
-               clicks_now::NUMERIC AS value_now, clicks_then::NUMERIC AS value_then
+        SELECT cname, 'clicks'::TEXT      AS mname,
+               clicks_now::NUMERIC AS vnow, clicks_then::NUMERIC AS vthen
         FROM combined
         WHERE clicks_now > 0 OR clicks_then > 0
 
@@ -149,20 +168,20 @@ BEGIN
 
         -- cpa = spend / conversions (NULL when conversions = 0 in either period)
         SELECT
-            campaign_name,
-            'cpa'::TEXT AS metric_name,
-            CASE WHEN conv_now  > 0 THEN ROUND(spend_now  / conv_now,  2) ELSE NULL END AS value_now,
-            CASE WHEN conv_then > 0 THEN ROUND(spend_then / conv_then, 2) ELSE NULL END AS value_then
+            cname,
+            'cpa'::TEXT AS mname,
+            CASE WHEN conv_now  > 0 THEN ROUND(spend_now  / conv_now,  2) ELSE NULL END AS vnow,
+            CASE WHEN conv_then > 0 THEN ROUND(spend_then / conv_then, 2) ELSE NULL END AS vthen
         FROM combined
 
         UNION ALL
 
         -- cpc = spend / clicks (NULL when clicks = 0 in either period)
         SELECT
-            campaign_name,
-            'cpc'::TEXT AS metric_name,
-            CASE WHEN clicks_now  > 0 THEN ROUND(spend_now  / clicks_now,  2) ELSE NULL END AS value_now,
-            CASE WHEN clicks_then > 0 THEN ROUND(spend_then / clicks_then, 2) ELSE NULL END AS value_then
+            cname,
+            'cpc'::TEXT AS mname,
+            CASE WHEN clicks_now  > 0 THEN ROUND(spend_now  / clicks_now,  2) ELSE NULL END AS vnow,
+            CASE WHEN clicks_then > 0 THEN ROUND(spend_then / clicks_then, 2) ELSE NULL END AS vthen
         FROM combined
 
         UNION ALL
@@ -170,43 +189,43 @@ BEGIN
         -- ctr expressed as percentage (ctr_now is already × 100)
         -- NULL rows (no impressions) are filtered by the WHERE clause in deltas
         SELECT
-            campaign_name,
-            'ctr'::TEXT AS metric_name,
-            ctr_now  AS value_now,
-            ctr_then AS value_then
+            cname,
+            'ctr'::TEXT AS mname,
+            ctr_now  AS vnow,
+            ctr_then AS vthen
         FROM combined
     ),
 
     deltas AS (
-        -- Calculate delta; rows where value_then = 0 produce NULL delta and
+        -- Calculate delta; rows where vthen = 0 produce NULL delta and
         -- are excluded downstream by the ABS(delta) > 15 filter.
         SELECT
-            ml.campaign_name,
-            ml.metric_name,
-            ROUND(ml.value_now,  2) AS value_now,
-            ROUND(ml.value_then, 2) AS value_then,
+            ml.cname,
+            ml.mname,
+            ROUND(ml.vnow,  2) AS vnow,
+            ROUND(ml.vthen, 2) AS vthen,
             ROUND(
-                ((ml.value_now - ml.value_then) / NULLIF(ml.value_then, 0)) * 100,
+                ((ml.vnow - ml.vthen) / NULLIF(ml.vthen, 0)) * 100,
                 2
-            ) AS delta_pct
+            ) AS dpct
         FROM metrics_long ml
-        WHERE ml.value_now  IS NOT NULL
-          AND ml.value_then IS NOT NULL
+        WHERE ml.vnow  IS NOT NULL
+          AND ml.vthen IS NOT NULL
     )
 
     SELECT
-        d.campaign_name,
-        d.metric_name,
-        d.value_now,
-        d.value_then,
-        d.delta_pct AS delta_percentage,
+        d.cname AS campaign_name,
+        d.mname AS metric_name,
+        d.vnow  AS value_now,
+        d.vthen AS value_then,
+        d.dpct  AS delta_percentage,
         CASE
-            WHEN ABS(d.delta_pct) > 50 THEN 'CRITICAL'
+            WHEN ABS(d.dpct) > 50 THEN 'CRITICAL'
             ELSE 'SIGNIFICANT'
-        END          AS impact_level
+        END      AS impact_level
     FROM deltas d
-    WHERE ABS(d.delta_pct) > 15
-    ORDER BY ABS(d.delta_pct) DESC;
+    WHERE ABS(d.dpct) > 15
+    ORDER BY ABS(d.dpct) DESC;
 
 END;
 $$;
