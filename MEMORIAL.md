@@ -2850,9 +2850,9 @@ grep sb_secret frontend/src             # deve retornar 0 resultados
 
 Ambas passam — service key exclusiva ao backend Python e GitHub Actions.
 
-### PAUSE — Validação pendente
+### Validação
 
-**Aguardar que o Gestor realize o primeiro login oficial para validar a sessão dinâmica.** O critério de conclusão da v2.1 é: login com `tosi.gabriel@gmail.com` no dashboard em produção → card AI Narrative carrega com dados reais do workspace Woke People (sem erros 401 ou workspace nulo).
+Auth Shield validado com sucesso após login do Gestor. Sessão dinâmica funcional — workspace Woke People resolvido via `profiles` sem UUID hardcoded.
 
 ### Arquivos modificados
 
@@ -2863,3 +2863,91 @@ Ambas passam — service key exclusiva ao backend Python e GitHub Actions.
 | `frontend/src/app/dashboard/page.tsx` | Modificado | User email + logout em `DashSidebar`; email no header |
 | `frontend/src/app/login/page.tsx` | Modificado | `alert()` e `console.error` removidos |
 | `supabase/migrations/013_rls_hardening.sql` | **Novo** | RLS workspace-scoped para 12 tabelas de dados |
+
+---
+
+## v2.1.5 — AI Operations Layer: Ativa
+
+**Data:** Maio 2026  
+**Commit:** `1f07c39`  
+**Status:** ✅ Validado e em produção
+
+### Objetivo
+
+Tirar a página `/agents` do estado estático de "Preview" e ligá-la ao fluxo real de dados do motor de diagnóstico — tornando o Centro de Operações a primeira superfície de decisão live do SynapseIQ.
+
+### O que foi entregue
+
+#### `/api/agents/decisions` (nova rota server-side)
+
+Rota GET que resolve workspace da sessão (mesmo padrão de `resolveWorkspace()`) e faz duas queries em paralelo:
+
+1. `campaign_summary` → detecta campanhas com `cost > 0 AND conversions = 0` (P1 — Dreno de Verba)
+2. `operational_events WHERE category = 'kpi_anomaly'` → anomalias de KPI registadas pelo detector Python
+
+Produz um array `Decision[]` com:
+
+| Card | Tipo | Agente | Origem |
+|---|---|---|---|
+| Alerta de waste (ex: R$ 669,92) | `alert` | Anomaly Scout | `campaign_summary` determinístico |
+| Sugestão de pausa (advisory only) | `suggestion` | Anomaly Scout | derivado do mesmo |
+| Anomalia de ROAS | `alert` | Anomaly Scout | `operational_events.kpi_anomaly` |
+
+Todos os cards incluem o campo `rationale` com o raciocínio matemático exposto (critério, threshold, classificação P1/P2).
+
+**Governance guard preservado:** o card de sugestão de pausa inclui explicitamente "Sujeito à aprovação do gestor" no `body` e "PROIBIDO — Execução: advisory only" no `rationale`.
+
+#### `agents/page.tsx`
+
+- `DECISIONS` estáticos removidos
+- `useEffect` fetcha `/api/agents/decisions` no mount com cancellation flag
+- Loading spinner enquanto os dados chegam
+- Header exibe contagem real de decisões pendentes (badge vermelho)
+- Disclaimer actualizado: reflecte que as decisões são produzidas pelo motor real (determinístico + Gemini 2.5 Flash), não por agentes autónomos
+
+#### `AgentDecisionFeed`
+
+- Interface `Decision` expandida com `rationale?: string`
+- Chip "Raciocínio" renderizado em cada card que inclua o campo — styled identicamente ao chip de SQL query existente
+
+#### `AINarrativeCard`
+
+- Link "Ver no Centro de Operações →" adicionado no rodapé do card (ícone `ExternalLink`, sempre visível no estado success)
+- Implementado como `<Link href="/agents">` (Next.js client navigation)
+
+#### `Sidebar`
+
+- Badge "Preview" removido do item "Agentes de IA" — link activo, sem qualificação de roadmap
+- Destructuring e renderização condicional do badge removidos do componente
+
+### Arquitectura do fluxo
+
+```
+campaign_summary (Supabase)
+    ↓ deterministic: cost > 0 AND conversions = 0
+/api/agents/decisions (Route Handler)  ←  operational_events (kpi_anomaly)
+    ↓ Decision[]
+agents/page.tsx (useEffect fetch)
+    ↓
+AgentDecisionFeed → cards com rationale + approve/reject actions
+```
+
+### Decisões técnicas
+
+| Decisão | Motivo |
+|---|---|
+| Waste derivado de `campaign_summary` (não de `insight_feed`) | `insight_feed` contém insights de múltiplos períodos; `campaign_summary` deduplicado dá o snapshot actual — mesma fonte usada no narrative route |
+| Todos os cards atribuídos a `anomaly-scout` | É o único agente com identidade semântica coerente com detecção de anomalias e desperdício — Growth Master e Creative Critic ficam como roadmap |
+| `rationale` como campo separado de `body` | `body` é o diagnóstico para o gestor; `rationale` é o raciocínio técnico para auditabilidade — separação de audiências |
+| Link "Ver no Centro de Operações" sempre visível (não só em isAlert) | A página de agentes é o destino natural para qualquer diagnóstico, independentemente da urgência |
+| Badge "Preview" removido sem criar badge alternativo | O produto está activo — qualificações de roadmap pertencem ao disclaimer interno da página, não à navegação global |
+
+### Arquivos criados/modificados
+
+| Arquivo | Tipo | O que mudou |
+|---|---|---|
+| `frontend/src/app/api/agents/decisions/route.ts` | **Novo** | Rota server-side com waste detection + KPI anomalies + rationale |
+| `frontend/src/app/agents/page.tsx` | Modificado | Fetch live; loading state; pending count real; disclaimer actualizado |
+| `frontend/src/components/AgentDecisionFeed.tsx` | Modificado | `rationale?: string` na interface + chip de renderização |
+| `frontend/src/components/AINarrativeCard.tsx` | Modificado | Link "Ver no Centro de Operações" no rodapé |
+| `frontend/src/components/Sidebar.tsx` | Modificado | Badge "Preview" removido; destructuring limpo |
