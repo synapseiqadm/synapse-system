@@ -313,7 +313,7 @@ def main(dry_run: bool = False) -> None:
                 seen.add(nm)
                 campaign_rows.append(r)
 
-        snap_res = supabase.rpc("fn_campaign_snapshot_delta", {"p_workspace_id": WOKE_WORKSPACE_ID}).execute()
+        snap_res = supabase.rpc("fn_campaign_snapshot_delta", {"target_workspace_id": WOKE_WORKSPACE_ID}).execute()
         snapshot_rows: list[dict] = snap_res.data or []
 
         generate_agent_decisions(
