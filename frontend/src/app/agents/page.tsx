@@ -60,6 +60,15 @@ export default function AgentsPage() {
   const [decisions, setDecisions]         = useState<Decision[]>([]);
   const [loadingFeed, setLoadingFeed]     = useState(true);
 
+  const refetch = () => {
+    setLoadingFeed(true);
+    fetch("/api/agents/decisions")
+      .then((r) => r.json())
+      .then((body) => { if (body.ok && body.data) setDecisions(body.data as Decision[]); })
+      .catch(() => {})
+      .finally(() => setLoadingFeed(false));
+  };
+
   useEffect(() => {
     let cancelled = false;
     fetch("/api/agents/decisions")
@@ -140,6 +149,7 @@ export default function AgentsPage() {
               <AgentDecisionFeed
                 decisions={decisions}
                 filterAgentId={selectedAgent ?? undefined}
+                onRefresh={refetch}
               />
             )}
           </div>

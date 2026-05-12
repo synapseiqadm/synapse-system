@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Database,
   Lightbulb,
@@ -54,9 +55,11 @@ const FILTERS: { id: DecisionType | "all"; label: string }[] = [
 interface AgentDecisionFeedProps {
   decisions: Decision[];
   filterAgentId?: string;
+  onRefresh?: () => void;
 }
 
-export function AgentDecisionFeed({ decisions, filterAgentId }: AgentDecisionFeedProps) {
+export function AgentDecisionFeed({ decisions, filterAgentId, onRefresh }: AgentDecisionFeedProps) {
+  const router = useRouter();
   const [states, setStates]         = useState<Record<number, DecisionStatus>>({});
   const [feedback, setFeedback]     = useState<Record<number, string>>({});
   const [typeFilter, setTypeFilter] = useState<DecisionType | "all">("all");
@@ -76,6 +79,8 @@ export function AgentDecisionFeed({ decisions, filterAgentId }: AgentDecisionFee
             ...f,
             [d.id]: "Aprovado ✓ — Aguardando implementação de API Google Ads",
           }));
+          router.refresh();
+          onRefresh?.();
         }
       } catch {
         // status already set optimistically; silent on network error
