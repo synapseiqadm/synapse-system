@@ -2191,7 +2191,9 @@ Máximo 3 eventos exibidos (`.slice(0, 3)`) para não ocupar mais espaço do que
 
 ---
 
-## Log de Evolução (v1.9.x)
+## Log de Evolução — Intelligence Hub (v1.9.x)
+
+> **Nota de alinhamento de nomenclatura (2026-05-12):** A fase v1.9 é o **Intelligence Hub** — camada de IA generativa do SynapseIQ. Inclui backend (motor Gemini, snapshot engine, pipeline de dados) e frontend (vitrine executiva). A task **v1.7.4c** — Executive Insight Card foi reclassificada como **UI Materialization for Intelligence Hub** e faz parte do escopo v1.9, não de uma evolução standalone de dashboard.
 
 ### v1.9.1 — Snapshot Engine: SQL Delta Logic ✅ CONCLUÍDA
 
@@ -2357,6 +2359,53 @@ Capacidades previstas:
 - **Causal Narrative:** dada uma variação de ROAS, listar eventos operacionais contemporâneos como candidatos causais.
 - **Anomaly Resolution:** marcar anomalias como `resolved` quando o KPI retorna ao intervalo normal, fechando o ciclo de observabilidade.
 - **Actionable Reports & To-Do Engine:** gerar relatórios semanais (ou por período customizado) que traduzam anomalias e insights em listas de tarefas executáveis — com instruções claras para ação manual (ex: pausar campanha sem conversão, corrigir tag de evento) e ciclo de status `Identificado → Em Execução → Resolvido`. Serve como ponte entre a inteligência diagnóstica atual e futuras automações via agentes.
+
+---
+
+### v1.7.4c — UI Materialization for Intelligence Hub ✅ CONCLUÍDA
+
+> Reclassificada como componente da fase v1.9 (Intelligence Hub). Ver entrada completa em `## v1.7.4c` neste documento.
+
+**Commit:** `3cfc82c`  
+**Status:** Card Executive Insight renderizado no Painel Executivo com mock v1.9.2. Aguardando `GEMINI_API_KEY` para ativar dados live.
+
+---
+
+### v1.9.5 — Official Intelligence Activation: GCP Migration 🔄 EM PREPARAÇÃO
+
+**Data:** 2026-05-12  
+**Status:** Backend pronto. Aguardando injeção de `GEMINI_API_KEY` pelo Gestor para execução do live test.
+
+#### Objetivo
+
+Ativar o motor de diagnóstico Gemini 1.5 em modo produção, substituindo o mock pela chamada real à API oficial do projeto `synapsesystem` no Google Cloud.
+
+#### Estado do backend (pré-ativação)
+
+| Componente | Estado | Detalhe |
+|---|---|---|
+| `ai_narrative.py` | ✅ Pronto | Lê `GEMINI_API_KEY` de `os.getenv()` — zero mock no path de produção |
+| `backend/.env` | ✅ Seguro | Não rastreado pelo git (`.gitignore` dupla cobertura: root + `backend/`) |
+| `test_live_api_call` | ✅ Pronto | Auto-skip sem chave; executa chamada real ao Gemini quando chave presente |
+| `fn_campaign_snapshot_delta` | ✅ Deployed | v3 rolling window aplicada ao Supabase; retornará dados reais a partir de 2026-05-13 (D-8 disponível) |
+| `MOCK_NARRATIVE` (frontend) | ℹ️ Ativo | Permanece no `AINarrativeCard.tsx` até API Route frontend ser implementada |
+
+#### Injeção da chave (único passo necessário)
+
+Editar `backend/.env` e descomentar:
+```ini
+GEMINI_API_KEY=AIza...   ← chave do projeto synapsesystem
+```
+
+**Fonte:** Google Cloud Console → projeto `synapsesystem` → APIs & Services → Credentials → Create API Key → restringir à `Generative Language API`.
+
+#### Comando de live test
+
+```powershell
+d:\dev\synapse\.venv\Scripts\python.exe -m pytest backend/tests/test_ai_narrative.py::TestAINarrative::test_live_api_call -v -s
+```
+
+**Critério de sucesso:** `1 passed` + JSON com `insight_summary`, `technical_diagnosis`, `recommended_action`, `priority_score` e `_meta.latency_ms > 0`.
 
 ---
 
