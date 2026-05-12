@@ -2147,6 +2147,40 @@ Máximo 3 eventos exibidos (`.slice(0, 3)`) para não ocupar mais espaço do que
 
 ---
 
+## Log de Evolução (v1.9.x)
+
+### v1.9.1 — Snapshot Engine: SQL Delta Logic ✅ CONCLUÍDA
+
+**Data de conclusão:** 2026-05-12
+
+Implementação do Snapshot Engine (SQL) para análise comparativa D-1 vs D-8 com lógica de threshold de 15%.
+
+#### O que foi entregue
+
+- Função PL/pgSQL `public.fn_campaign_snapshot_delta(target_workspace_id UUID)` — diagnóstico comparativo entre Ontem (D-1) e o mesmo dia da semana anterior (D-8)
+- CTEs `period_a` / `period_b` com filtro de granularidade diária (`date_range_start = date_range_end`)
+- Fórmula delta: `((value_now - value_then) / NULLIF(value_then, 0)) * 100` — protegida contra divisão por zero
+- Métricas calculadas: `spend`, `conversions`, `cpa` (derivada: `cost / conversions`)
+- Classificação de impacto: `CRITICAL` (desvio absoluto > 50%) | `SIGNIFICANT` (> 15%)
+- Filtro final: retorna apenas variações com `ABS(delta) > 15%`
+- `FULL OUTER JOIN` entre períodos para preservar campanhas presentes em apenas um dos períodos
+- Exclusão automática de campanhas com `spend = 0` em ambos os períodos
+- `GRANT EXECUTE TO anon, authenticated` — compatível com postura MVP (anon key no frontend)
+
+#### Arquivo
+
+| Arquivo | Tipo | Descrição |
+|---|---|---|
+| `docs/sql/fn_campaign_snapshot_delta.sql` | Rascunho SQL | Função delta — pronta para execução no Editor SQL do Supabase |
+
+#### Observações técnicas registradas
+
+- `clicks` e `cpc` excluídos: coluna `clicks` ausente em `campaign_summary`. Adicionável via `ALTER TABLE` sem breaking change quando o pipeline começar a ingerir dados de cliques por dia.
+- Métricas com `value_then = 0` (linha de base zero) produzem delta `NULL` e são excluídas da saída — comportamento esperado e documentado.
+- Função totalmente parametrizada por `workspace_id`; nenhum UUID está hardcoded na lógica.
+
+---
+
 ## Próximos Passos — v1.9: Explainable AI / Insight Diffs
 
 Com a infraestrutura causal estabelecida, a v1.9 focará em **tornar os insights explicáveis**: correlacionar automaticamente variações de KPI com eventos registrados em `operational_events`, gerar narrativas de causa-efeito e comparar o estado de insights entre períodos (Snapshot Diff Engine).
