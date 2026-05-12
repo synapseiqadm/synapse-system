@@ -2519,3 +2519,171 @@ Registro dos riscos identificados e débitos técnicos conscientes acumulados at
 **Critério de resolução:** Integração do Supabase Auth com RLS por `auth.uid()` e mapeamento de usuários a workspaces via tabela `workspace_members`. Este marco é pré-requisito para as Explorações 1 e 2 da seção v2.x e para o ciclo de aprovação do Actionable Reports Engine (v1.9).
 
 **Dependências:** Nenhuma decisão de schema deve fechar esta porta — `operational_events.actor` já é `TEXT` (extensível para UUID de usuário), `workspace_members` pode ser adicionada sem breaking changes.
+
+---
+
+## v2.0 — AI Narrative Integration: Connecting Brain to Body
+
+**Data:** Maio 2026
+
+### Objetivo
+
+Conectar o módulo Python `ai_narrative.py` (Google Gemini 2.5 Flash) ao dashboard React, eliminando o estado de prop-drilling e criando um fluxo de ponta a ponta: Supabase → Gemini → Card executivo.
+
+### Arquitetura
+
+O SynapseIQ não usa FastAPI — todas as APIs são Next.js App Router Route Handlers. A integração foi implementada diretamente nesta camada, sem adicionar dependências Python ao frontend.
+
+```
+Supabase (fn_campaign_snapshot_delta)
+    ↓
+frontend/src/app/api/ai/narrative/route.ts  ← Route Handler (GET)
+    ↓  Gemini REST API (fetch)
+    ↓  https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+    ↓
+AINarrativeCard.tsx  ← self-fetching client component
+```
+
+### Arquivos criados/modificados
+
+| Arquivo | Tipo | O que mudou |
+|---|---|---|
+| `frontend/src/app/api/ai/narrative/route.ts` | **Novo** | Route Handler GET: busca snapshot delta no Supabase, chama Gemini REST, valida e devolve JSON |
+| `frontend/src/components/AINarrativeCard.tsx` | **Refatorado** | Componente self-fetching com estados `loading / success / offline`; elimina props externas |
+| `frontend/.env.local` | Modificado | `GEMINI_API_KEY` adicionado (server-only — sem prefixo `NEXT_PUBLIC_`) |
+
+### Comportamento do componente (AINarrativeCard)
+
+- **Estado `loading`:** `LoadingSkeleton` com spinner + skeleton animado + "Sincronizando com a Inteligência Synapse..."
+- **Estado `success`:** card com `priority_score`, `insight_summary`, `technical_diagnosis`, `recommended_action`
+  - `isAlert` (score ≥ 4): borda esquerda vermelha, ícone `AlertTriangle`, fundo `bg-red-950/[0.07]`
+  - `isAlert` false: borda esquerda `indigo`
+  - Badge `PREVIEW DE TESTE` visível apenas quando `is_simulated: true`
+- **Estado `offline`:** `OfflineCard` com ícone `WifiOff` e "Inteligência temporariamente offline."
+- Cancellation flag `let cancelled = false` no useEffect — evita setState após desmontagem
+
+### Segurança
+
+- `GEMINI_API_KEY` nunca exposto ao browser (sem `NEXT_PUBLIC_`)
+- `backend/.env` protegido por `.gitignore` (2 entradas: linhas 5 e 54)
+- `frontend/.env.local` gitignored por padrão
+- Sem service key no frontend
+
+### Notas técnicas — Gemini 2.5 Flash
+
+- Modelo: `gemini-2.5-flash` (único disponível para novas contas GCP — `gemini-2.0-flash` retorna 404)
+- `thinkingConfig: { thinkingBudget: 0 }` **obrigatório**: sem este flag, o modelo reserva >1500 tokens de thinking que competem com `maxOutputTokens`, causando truncação mid-JSON e `JSONDecodeError`
+- `maxOutputTokens: 2048`, `temperature: 0.2`, `responseMimeType: "application/json"`
+- Latência observada: ~2100ms com thinking desativado (era 6–10s com thinking ativo)
+
+### Estado inicial (sem D-8)
+
+`fn_campaign_snapshot_delta` retorna 0 rows nos primeiros 7 dias após onboarding (requer snapshot de D-8 disponível). O card exibia corretamente `priority_score: 1` ("sem anomalias") — comportamento esperado, não um bug.
+
+---
+
+## v2.0.1 — High-Resolution Reasoning: Impact & Priority
+
+**Data:** Maio 2026
+
+### Objetivo
+
+Atualizar o modelo de raciocínio do Gemini para:
+1. Classificar sinais em P1/P2/P3 com regras financeiras explícitas
+2. Detectar desperdício de verba real mesmo sem dados de delta (via `campaign_summary`)
+3. Garantir que R$669,92 em gasto sem conversão → `priority_score = 5` → card vermelho/crítico
+
+### Problema que motivou a mudança
+
+O SYSTEM_PROMPT anterior não tinha hierarquia de prioridade nem quantificação financeira. Com `fn_campaign_snapshot_delta` retornando 0 rows (D-8 ainda não disponível), o card sempre mostrava `priority_score: 1` mesmo com campanhas ativas gastando R$669,92 sem nenhuma conversão.
+
+### Framework P1 / P2 / P3
+
+| Nível | Nome | trigger | priority_score |
+|---|---|---|---|
+| **P1** | DRENO DE VERBA | spend > 0 com conversions = 0; CPA +50% CRITICAL | 4–5 |
+| **P2** | OPORTUNIDADE ESTRATÉGICA | CPC↓ + CTR↑ + Conv↑ (ciclo virtuoso); funnel drop >40% | 3–4 |
+| **P3** | GOVERNANÇA / QUALIDADE | qualidade de dados, UTM gaps, rastreamento suspeito | 1–2 |
+
+**Hard rule:** total waste > R$500 → `priority_score` MUST be 5 (independente de outros sinais).
+
+### Formato de mensagem — três seções
+
+O `_build_user_message` (Python) e `buildUserMessage` (TypeScript) agora produzem:
+
+```
+SECTION 1 — CAMPAIGN PERFORMANCE (current 30-day period)
+  campaign_name · spend (R$) · conversions · CPA (R$/conv) · ROAS
+  [uma linha por campanha deduplciada, mais recente por campaign_name]
+
+SECTION 2 — DETERMINISTIC SIGNALS (rule-based engine, always reliable)
+  [CRITICAL] 5 campaign(s) with R$669.92 total spend and ZERO conversions: ...
+
+SECTION 3 — DELTA ANALYSIS (D-1 vs D-8, |delta| > 15%)
+  (empty — D-8 snapshot not yet available)
+```
+
+### Enriquecimento em route.ts
+
+O Route Handler agora faz 2 queries em paralelo (`Promise.all`):
+
+1. `fn_campaign_snapshot_delta` → Section 3 (0 rows até D-8 disponível)
+2. `campaign_summary` → deduplica por `campaign_name` (mais recente por `date_range_end + loaded_at`) → Section 1
+
+Deterministic signals (Section 2) são **derivados** dos dados de Section 1 no handler TypeScript:
+- Filtra `cost > 0 AND conversions = 0`
+- Soma o waste total
+- Severity: `CRITICAL` se waste > R$500, senão `SIGNIFICANT`
+- Nomeia cada campanha afetada com seu custo
+
+### Dados reais — snapshot 2026-04-13 → 2026-05-12
+
+| Campanha | Gasto | Conversões |
+|---|---|---|
+| Mudanca de Carreira | R$3,04 | 0 |
+| [B2C][Topo][S][Teste Perfil Comportamental][Brasil] | R$96,26 | 0 |
+| [P][B2B][CONVERSÃO][R&S][ATS][MAX CONV] | R$339,95 | 0 |
+| [B2C][Topo][S][Frase][Teste de Perfil][Brasil] | R$170,52 | 0 |
+| [YT][AWARENESS][CANAIS RECOLOCAÇÃO][CPM] | R$60,15 | 0 |
+| **Total waste** | **R$669,92** | — |
+
+R$669,92 > R$500 → HARD RULE ativa → `priority_score = 5` → card vermelho
+
+### Arquivos modificados
+
+| Arquivo | O que mudou |
+|---|---|
+| `backend/connectors/ai_narrative.py` | SYSTEM_PROMPT com P1/P2/P3; `_build_user_message` refatorado para 3 seções (parâmetros opcionais `campaign_rows`, `deterministic_signals`) |
+| `frontend/src/app/api/ai/narrative/route.ts` | SYSTEM_PROMPT sincronizado; query paralela a `campaign_summary`; cálculo de zero-conversion waste; `buildUserMessage` com 3 seções; `_meta` enriquecido com `waste_campaigns` e `total_waste_brl` |
+
+### Validação
+
+```
+5/5 testes backend passaram (test_ai_narrative.py):
+  test_live_api_call   — PASSED  latency=2447ms
+  test_mock_pipeline   — PASSED
+  test_missing_api_key_raises — PASSED
+  test_invalid_json_raises    — PASSED
+  test_missing_field_raises   — PASSED
+
+TypeScript: npx tsc --noEmit → 0 erros
+```
+
+Output live com SIMULATED_SNAPSHOT (10 delta rows, padrão HIGH-RESOLUTION):
+```json
+{
+  "insight_summary": "CPA da campanha 'Woke | Conscientização | Agosto' dobrou, gerando R$ 626,46 em custo extra e...",
+  "technical_diagnosis": "CPA increased 100.43% (R$44.55 → R$89.29)... CTR fell from 3.35% to 2.18%... 'Remarketing | Sempre Ativo' shows virtuous cycle...",
+  "priority_score": 5
+}
+```
+
+### Decisões técnicas
+
+| Decisão | Motivo |
+|---|---|
+| Section 2 derivada no handler TypeScript, não consultando `insight_feed` | `insight_feed` estava vazio; o cálculo de waste é simples e determinístico — não justifica dependência de tabela adicional |
+| Deduplicação de campanhas por `campaign_name` (mais recente) | Evita duplicatas de snapshots históricos sem query DISTINCT ON (incompatível com Supabase JS client) |
+| `Promise.all` para snapshot + campaign_summary | Queries independentes — paralelismo reduz latência total do handler |
+| `_meta` inclui `waste_campaigns` e `total_waste_brl` | Rastreabilidade: permite verificar quanto waste foi detectado e passado ao Gemini |
+| `GEMINI_API_KEY` em `frontend/.env.local` sem `NEXT_PUBLIC_` | Chave nunca exposta ao bundle do browser; validada no topo do handler com return 503 se ausente |

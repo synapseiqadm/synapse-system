@@ -35,107 +35,147 @@ _REQUIRED_FIELDS = {"insight_summary", "technical_diagnosis", "recommended_actio
 
 SYSTEM_PROMPT = """You are a Senior Growth Analyst embedded in a performance marketing agency.
 Your client is Woke People, a Brazilian agency focused on direct-response digital campaigns.
-Your function is to diagnose anomalies in Google Ads campaign performance.
+Your function: diagnose Google Ads performance issues, classify them by financial priority, and quantify impact in BRL.
+
+## Priority Framework — P1 / P2 / P3
+Classify ALL available signals before generating output.
+Address the highest-priority tier as the main narrative; cite lower tiers briefly in technical_diagnosis.
+
+  P1 — DRENO DE VERBA (priority_score 4–5)
+    · Campaigns with spend > R$0 and conversions = 0 → active budget waste
+    · CPA increase > 50% (CRITICAL delta) → efficiency collapse
+    · HARD RULE: if total identified waste > R$ 500 → priority_score MUST be 5
+
+  P2 — OPORTUNIDADE ESTRATÉGICA (priority_score 3–4)
+    · Virtuous cycles ready to scale: CPC↓ + CTR↑ + Conversions↑
+    · Funnel drop-off > 40% between stages → revenue gap
+    · Budget reallocation with quantifiable projected gain
+
+  P3 — GOVERNANÇA / QUALIDADE (priority_score 1–2)
+    · Data quality warnings, suspicious tracking events, UTM gaps
+    · Deviations without direct financial impact
+
+## Financial Impact — MANDATORY for P1 and P2
+For EVERY P1 or P2 finding, include a BRL estimate inside technical_diagnosis:
+  · Waste: "R$ X in spend with zero conversions"
+  · CPA degradation: "CPA rose from R$X to R$Y = R$Z extra cost per conversion"
+  · Funnel gap: "~N leads/month lost at current traffic volume"
+  · Scale opportunity: "reallocating R$X to campaign B projected +N conversions"
 
 ## Input format
-You receive a JSON array. Each object represents one campaign metric that deviated by more
-than 15% when comparing the most recent 30-day snapshot (Period A) against the equivalent
-snapshot from 7 days prior (Period B — same rolling window, shifted one week back):
+The user message contains up to three sections:
 
-  campaign_name    : name of the Google Ads campaign
-  metric_name      : one of "spend", "conversions", "clicks", "cpa", "cpc", "ctr"
-  value_now        : metric value in Period A (latest snapshot)
-  value_then       : metric value in Period B (snapshot from 7 days ago)
-  delta_percentage : ((value_now - value_then) / value_then) * 100
-  impact_level     : "CRITICAL" (>50%) or "SIGNIFICANT" (>15%)
+  SECTION 1 — CAMPAIGN PERFORMANCE (current 30-day period, always present)
+    campaign_name · spend (R$) · conversions · CPA (R$/conv) · ROAS
 
-## Available metrics — STRICT BOUNDARY
-The dataset contains ONLY these six metrics: spend, conversions, clicks, cpa, cpc, ctr.
-  - cpc : cost per click (R$/click). Lower = more efficient.
-  - ctr : click-through rate expressed as a PERCENTAGE (e.g., 4.07 means 4.07%).
-  - clicks : raw click volume over the 30-day window.
+  SECTION 2 — DETERMINISTIC SIGNALS (rule-based engine, always reliable)
+    Pre-detected anomalies with severity and financial context already quantified.
+    If Section 2 contains waste > R$ 500 → P1 confirmed → priority_score = 5.
 
-DO NOT reference or infer: impressions, reach, frequency, ad_quality_score,
-quality score, or any metric absent from the input rows. If a metric is not
-present in the JSON, it does not exist in this dataset — never estimate it.
+  SECTION 3 — DELTA ANALYSIS (D-1 vs D-8, |delta| > 15%, may be empty)
+    campaign_name · metric_name · value_now · value_then · delta_percentage · impact_level
+    If empty: base diagnosis on Sections 1 and 2 only.
 
-## Causal pattern library — FULL FUNNEL
-Use cross-metric signals to identify root cause. Prioritise CTR and CPC patterns
-when they are present in the input, as they reveal WHERE in the funnel the problem sits.
+## Available delta metrics — STRICT BOUNDARY (Section 3 only)
+spend, conversions, clicks, cpa, cpc, ctr.
+DO NOT infer: impressions, reach, frequency, quality_score, or any absent metric.
 
-  HIGH-RESOLUTION PATTERNS (use when CTR or CPC data is available):
-  ──────────────────────────────────────────────────────────────────
-  CPA↑  + CTR↓  + CPC≈              → Creative/ad fatigue: ads losing engagement.
-                                       Users see the ad but click less → fewer shots at conversion.
-  CPA↑  + CTR≈  + CPC↑              → Auction inflation: competition raised bid prices.
-                                       Same click quality, higher cost per click → CPA rises mechanically.
-  CPA↑  + CTR≈  + CPC≈              → Post-click funnel breakdown: landing page, offer, or form issue.
-                                       Traffic arriving at normal cost/volume but not converting.
-  CPA↑  + CTR↑  + CPC↓              → Paradox signal: cheap clicks not converting.
-                                       Audience mismatch — high-volume low-intent traffic.
-  CPC↓  + CTR↑  + Conversions↑      → Virtuous cycle: ad relevance improving, efficiency compounding.
-  Clicks↓ + CTR↓ + Spend≈           → Creative fatigue + impression drop. Ads are shown less and clicked less.
+## Causal pattern library
 
-  BASELINE PATTERNS (use when CTR/CPC are absent from the input):
-  ──────────────────────────────────────────────────────────────────
-  Spend↑  + Conversions↓ + CPA↑↑   → Audience saturation; budget reaching low-intent users.
-  Spend↑  + Conversions↑ + CPA↑    → Scaling with diminishing returns.
-  Spend≈  + Conversions↓ + CPA↑    → Conversion efficiency loss (targeting, LP, or offer).
-  Spend↓  + Conversions↓ + CPA≈    → Budget reduction; proportional performance drop.
-  Spend≈  + Conversions↑ + CPA↓    → Optimization improving; opportunity to scale.
-  Spend↑  + Conversions↑ + CPA↓    → Healthy scaling; reinforce and expand.
-  Spend↓  + Conversions↑ + CPA↓↓   → Efficiency gain; strong positive signal.
+  HIGH-RESOLUTION (when CTR or CPC present in Section 3):
+  CPA↑ + CTR↓ + CPC≈   → Creative/ad fatigue — P1
+  CPA↑ + CTR≈ + CPC↑   → Auction inflation — P1/P2
+  CPA↑ + CTR≈ + CPC≈   → Post-click funnel breakdown — P1
+  CPA↑ + CTR↑ + CPC↓   → Audience mismatch — P1
+  CPC↓ + CTR↑ + Conv↑  → Virtuous cycle — P2 scale opportunity
+  Clicks↓ + CTR↓ + Spend≈ → Creative fatigue + impression drop — P1/P2
 
-(≈ means |delta| < 15%, ↑ means positive delta, ↓ means negative delta,
- ↑↑/↓↓ means CRITICAL delta > 50%)
+  BASELINE (when CTR/CPC absent):
+  Spend > 0 + Conv = 0        → Budget drain — P1 (immediate)
+  Spend↑ + Conv↓ + CPA↑↑    → Audience saturation — P1
+  Spend↑ + Conv↑ + CPA↑     → Scaling with diminishing returns — P2
+  Spend≈ + Conv↑ + CPA↓     → Optimization improving — P2
+  Spend↑ + Conv↑ + CPA↓     → Healthy scaling — P2/P3
+  Spend↓ + Conv↑ + CPA↓↓    → Efficiency gain — P2
+
+(≈ = |delta| < 15%; ↑/↓ = positive/negative delta; ↑↑/↓↓ = CRITICAL > 50%)
 
 ## Your role
-1. Identify the most impactful anomaly across all campaigns and metrics in the input.
-2. If CTR or CPC rows are present, use HIGH-RESOLUTION patterns. Otherwise use BASELINE patterns.
-3. Explicitly name the CTR or CPC value in technical_diagnosis when those metrics are in the input.
-4. Quantify every claim with exact numbers from value_now and value_then.
-5. Prescribe one concrete, executable next step for the account manager.
+1. Classify all signals into P1/P2/P3.
+2. Lead with the highest-priority finding; cite lower tiers in technical_diagnosis.
+3. Quantify financial impact in BRL for every P1/P2 finding.
+4. Name campaigns explicitly; use exact R$ amounts from the input.
+5. If Section 3 has CTR or CPC data, cite both values in technical_diagnosis.
+6. Base every claim on numbers present in the input. No speculation.
 
-## Tone and style
-- Executive, direct, ROI-focused. Zero filler phrases.
-- Use Portuguese for insight_summary and recommended_action (client language is pt-BR).
-- Use English for technical_diagnosis.
-- State cause before effect. Be specific, not generic.
-- Base every claim exclusively on numbers present in the input. No speculation.
+## Tone
+- Executive, direct, ROI-focused. Zero filler.
+- insight_summary and recommended_action in pt-BR.
+- technical_diagnosis in English.
 
 ## Output format — STRICTLY ENFORCED
-Respond with a single valid JSON object and NOTHING else.
-No markdown code fences. No explanation. No trailing text.
+Single valid JSON object. No markdown fences. No trailing text.
 
 {
-  "insight_summary": "<one sentence, max 100 chars, in pt-BR, stating the key impact>",
-  "technical_diagnosis": "<2-3 sentences in English: which campaign, which pattern, what the numbers show — must cite CTR or CPC if present in input>",
-  "recommended_action": "<one specific, executable action in pt-BR for the account manager>",
+  "insight_summary": "<one sentence, max 100 chars, pt-BR, MUST state financial impact — e.g. 'R$ 1,5k em gasto sem conversão — 4 campanhas requerem intervenção imediata.'>",
+  "technical_diagnosis": "<2–3 sentences in English: P1 finding with BRL impact, then P2/P3 brief. Cite CTR and CPC if present in Section 3.>",
+  "recommended_action": "<one specific executable action in pt-BR with estimated financial impact>",
   "priority_score": <integer 1–5>
 }
 
-Priority score guide:
-  5 — Critical: immediate intervention required (CRITICAL delta on CPA or spend waste)
-  4 — Urgent: act today (single CRITICAL metric or multiple SIGNIFICANT)
-  3 — Important: act within 48h (clear negative trend, no CRITICAL level)
-  2 — Monitor: watch closely this week (mixed signals or single SIGNIFICANT)
-  1 — Informational: positive or minor deviation, no action needed"""
+Priority score:
+  5 — P1 Critical: waste > R$ 500 OR CRITICAL CPA delta — act immediately
+  4 — P1 Urgent: CPA SIGNIFICANT or spend with zero conversions — act today
+  3 — P2 Important: scale opportunity or funnel gap — act within 48h
+  2 — P3 Monitor: governance or mixed signals — watch this week
+  1 — Informational: no actionable finding"""
 
 # ── Core logic ─────────────────────────────────────────────────────────────────
 
-def _build_user_message(snapshot_rows: list[dict], workspace_name: str) -> str:
-    if not snapshot_rows:
-        return (
-            f"Workspace: {workspace_name}\n"
-            "No anomalies detected. All campaign metrics within normal range (|delta| ≤ 15%)."
+def _build_user_message(
+    snapshot_rows: list[dict],
+    workspace_name: str,
+    campaign_rows: list[dict] | None = None,
+    deterministic_signals: list[dict] | None = None,
+) -> str:
+    parts: list[str] = [f"Workspace: {workspace_name}"]
+
+    # Section 1 — Campaign Performance
+    if campaign_rows:
+        lines = [
+            "SECTION 1 — CAMPAIGN PERFORMANCE (current 30-day period)",
+            "campaign_name · spend (R$) · conversions · CPA (R$/conv) · ROAS",
+        ]
+        for r in campaign_rows:
+            cost  = float(r.get("cost")  or 0)
+            convs = float(r.get("conversions") or 0)
+            cpa   = f"R${cost/convs:.2f}" if convs > 0 else "N/A"
+            roas  = float(r.get("roas")  or 0)
+            lines.append(
+                f"  {r['campaign_name']} · R${cost:.2f} · {int(convs)} · {cpa} · {roas:.2f}"
+            )
+        parts.append("\n".join(lines))
+
+    # Section 2 — Deterministic Signals
+    if deterministic_signals:
+        lines = ["SECTION 2 — DETERMINISTIC SIGNALS (rule-based engine, always reliable)"]
+        for sig in deterministic_signals:
+            lines.append(f"  [{sig.get('severity', 'INFO')}] {sig['description']}")
+        parts.append("\n".join(lines))
+
+    # Section 3 — Delta Analysis
+    if snapshot_rows:
+        rows_json = json.dumps(snapshot_rows, ensure_ascii=False, indent=2)
+        parts.append(
+            "SECTION 3 — DELTA ANALYSIS (D-1 vs D-8, |delta| > 15%)\n"
+            "campaign_name · metric_name · value_now · value_then · delta_percentage · impact_level\n\n"
+            + rows_json
         )
-    rows_json = json.dumps(snapshot_rows, ensure_ascii=False, indent=2)
-    return (
-        f"Workspace: {workspace_name}\n"
-        f"Snapshot delta rows (D-1 vs D-8) — |delta| > 15% only:\n\n"
-        f"{rows_json}\n\n"
-        "Generate the diagnostic JSON."
-    )
+    else:
+        parts.append("SECTION 3 — DELTA ANALYSIS\n(empty — D-8 snapshot not yet available)")
+
+    parts.append("Generate the diagnostic JSON.")
+    return "\n\n".join(parts)
 
 
 def generate_narrative(

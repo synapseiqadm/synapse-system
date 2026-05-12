@@ -1,5 +1,6 @@
 "use client";
-import { Sparkles, ArrowRight, AlertTriangle } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Sparkles, ArrowRight, AlertTriangle, Loader2, WifiOff } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -11,27 +12,10 @@ interface NarrativeData {
   is_simulated:        boolean;
 }
 
-// ─── Mock — mirrors exact output of ai_narrative.generate_narrative(is_simulated=True)
-// Replace with live API call once fn_campaign_snapshot_delta accumulates 7+ days of syncs.
-
-const MOCK_NARRATIVE: NarrativeData = {
-  insight_summary:
-    "CPA +100% em 'Conscientização | Agosto': CTR caiu 35% — fadiga criativa crítica.",
-  technical_diagnosis:
-    "Campaign 'Woke | Conscientização | Agosto' matches the CPA↑+CTR↓+CPC≈ pattern: " +
-    "spend rose 27.55% (R$980→R$1,250) while CTR fell 34.93% (3.35%→2.18%) and CPC remained stable " +
-    "— ads are shown more but clicked less, cutting conversion shots and driving CPA from R$44.55 " +
-    "to R$89.29 (+100.43%, CRITICAL). " +
-    "'Remarketing | Sempre Ativo' shows the opposite virtuous cycle: CPC down 31.82% (R$1.98→R$1.35) " +
-    "with CTR up 39.13% (3.68%→5.12%) and conversions +72.22%, confirming budget reallocation opportunity.",
-  recommended_action:
-    "Substituir os criativos de 'Conscientização | Agosto' imediatamente " +
-    "(testar ao menos 3 variações de headline/visual para recuperar CTR acima de 3%) " +
-    "e redirecionar 15–20% do budget para 'Remarketing | Sempre Ativo', " +
-    "que apresenta ciclo virtuoso com CPC em queda e CTR crescente.",
-  priority_score: 5,
-  is_simulated:   true,
-};
+type FetchState =
+  | { status: "loading" }
+  | { status: "success"; narrative: NarrativeData }
+  | { status: "offline" };
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -46,11 +30,78 @@ function PriorityDots({ score, alert }: { score: number; alert: boolean }) {
   );
 }
 
+function LoadingSkeleton() {
+  return (
+    <div className="rounded-xl border border-zinc-800/60 bg-[#0f1117] overflow-hidden border-l-[3px] border-l-indigo-600/30">
+      <div className="px-5 py-3 border-b border-zinc-800/40 flex items-center gap-2">
+        <Loader2 size={13} className="text-indigo-400 shrink-0 animate-spin" />
+        <span className="text-[11px] font-semibold text-zinc-300 uppercase tracking-wider">
+          Executive Insight
+        </span>
+      </div>
+      <div className="px-5 py-5 flex flex-col gap-3">
+        <div className="flex items-center gap-2.5 text-zinc-500">
+          <Loader2 size={14} className="animate-spin shrink-0" />
+          <span className="text-[11px]">Sincronizando com a Inteligência Synapse...</span>
+        </div>
+        <div className="space-y-2 animate-pulse">
+          <div className="h-2 bg-zinc-800 rounded w-3/4" />
+          <div className="h-2 bg-zinc-800 rounded w-full" />
+          <div className="h-2 bg-zinc-800 rounded w-5/6" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OfflineCard() {
+  return (
+    <div className="rounded-xl border border-zinc-800/60 bg-[#0f1117] overflow-hidden border-l-[3px] border-l-zinc-700">
+      <div className="px-5 py-3 border-b border-zinc-800/40 flex items-center gap-2">
+        <Sparkles size={13} className="text-zinc-600 shrink-0" />
+        <span className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">
+          Executive Insight
+        </span>
+      </div>
+      <div className="px-5 py-5 flex items-center gap-3 text-zinc-600">
+        <WifiOff size={14} className="shrink-0" />
+        <span className="text-xs">Inteligência temporariamente offline.</span>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 const PREVIEW_PREFIX = "[PREVIEW DE TESTE] ";
 
-export function AINarrativeCard({ narrative = MOCK_NARRATIVE }: { narrative?: NarrativeData }) {
+export function AINarrativeCard() {
+  const [state, setState] = useState<FetchState>({ status: "loading" });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetch("/api/ai/narrative")
+      .then((res) => res.json())
+      .then((body) => {
+        if (cancelled) return;
+        if (body.ok && body.data) {
+          setState({ status: "success", narrative: body.data as NarrativeData });
+        } else {
+          setState({ status: "offline" });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setState({ status: "offline" });
+      });
+
+    return () => { cancelled = true; };
+  }, []);
+
+  if (state.status === "loading") return <LoadingSkeleton />;
+  if (state.status === "offline")  return <OfflineCard />;
+
+  const { narrative } = state;
   const isAlert = narrative.priority_score >= 4;
 
   const summaryText = narrative.insight_summary.startsWith(PREVIEW_PREFIX)
