@@ -175,6 +175,7 @@ def generate_narrative(
         response_mime_type="application/json",
         temperature=0.2,
         max_output_tokens=2048,
+        thinking_config=genai_types.ThinkingConfig(thinking_budget=0),
     )
 
     user_message = _build_user_message(snapshot_rows, workspace_name)
@@ -215,11 +216,17 @@ def generate_narrative(
         parsed["insight_summary"] = "[PREVIEW DE TESTE] " + parsed["insight_summary"]
 
     parsed["is_simulated"] = is_simulated
+
+    usage = response.usage_metadata
     parsed["_meta"] = {
-        "model":      GEMINI_MODEL,
-        "latency_ms": latency_ms,
-        "row_count":  len(snapshot_rows),
-        "workspace":  workspace_name,
+        "model":             GEMINI_MODEL,
+        "latency_ms":        latency_ms,
+        "row_count":         len(snapshot_rows),
+        "workspace":         workspace_name,
+        "tokens_prompt":     getattr(usage, "prompt_token_count",     None),
+        "tokens_output":     getattr(usage, "candidates_token_count", None),
+        "tokens_thinking":   getattr(usage, "thoughts_token_count",   None),
+        "tokens_total":      getattr(usage, "total_token_count",      None),
     }
 
     return parsed
