@@ -2003,6 +2003,50 @@ Janela de comparação do `trendDelta` é proporcional ao período: 7d → 3d vs
 
 ---
 
+## v1.7.4c — Executive Insight Card: AI Narrative UI ✅ CONCLUÍDA
+
+**Data de conclusão:** 2026-05-12  
+**Commit:** `3cfc82c` — `feat(ui): materialization of Executive Insight card and high-res metrics grid`  
+**Status:** Card de diagnóstico IA renderizado no Painel Executivo com mock v1.9.2. Aguardando GEMINI_API_KEY para ativar dados live.
+
+### Contexto
+
+A v1.9.2 entregou o motor de diagnóstico (backend). A v1.7.4c materializa esse diagnóstico no dashboard executivo — primeiro componente de IA generativa visível ao usuário do SynapseIQ. A versão usa dados simulados validados pelo Arquiteto até que os syncs diários acumulem 7+ dias e a chave Gemini seja configurada.
+
+### O que foi entregue
+
+**Componente `AINarrativeCard.tsx`** (`frontend/src/components/`):
+- Recebe `narrative?: NarrativeData` (prop opcional; sem prop usa `MOCK_NARRATIVE`)
+- **Borda lateral dinâmica:** `border-l-red-500` se `priority_score >= 4`, `border-l-indigo-600/60` caso contrário
+- **Badge "PREVIEW DE TESTE":** renderizado quando `is_simulated = true` (zinc-800, border zinc-700, text-[9px])
+- **Priority dots:** 5 pontos (● preenchido / ○ vazio), cor variável por urgência (red/amber/indigo)
+- **Seções:** Header (ícone + título + badge + dots) → Insight summary (text-sm, semibold) → Technical diagnosis (text-[11px], zinc-500) → Ação recomendada (fundo vermelho sutil se crítico)
+- **Posição:** Topo do `ExecutiveBoardView` (Painel Executivo), acima da barra de Saúde Operacional
+
+**Métricas de funil em `CampaignCard`** (`frontend/src/app/dashboard/page.tsx`):
+- Adicionado bloco CTR + CPC entre "Conversões" e a barra de share-of-spend
+- CTR: `(ctr * 100).toFixed(2)` em pt-BR — exibe "—" se `clicks = 0`
+- CPC: `cost / clicks` formatado em BRL — exibe "—" se `clicks = 0`
+- Layout: duas colunas compactas (text-[9px] labels, text-xs valores), separadas por `border-t border-zinc-800/30`
+- Query Supabase atualizada: inclui `clicks, ctr, date_range_end`; deduplicação por `campaign_id` mantém apenas o snapshot mais recente por campanha
+
+### Arquivos
+
+| Arquivo | Tipo | Descrição |
+|---|---|---|
+| `frontend/src/components/AINarrativeCard.tsx` | Novo componente | Card Executive Insight — mock + live-ready |
+| `frontend/src/components/ExecutiveBoardView.tsx` | Modificado | Import + render de `<AINarrativeCard />` no topo |
+| `frontend/src/app/dashboard/page.tsx` | Modificado | CampaignRow+query+CampaignCard com CTR/CPC |
+
+### Build
+
+```
+tsc --noEmit → 0 erros
+npm run build → compilação limpa, 10 rotas
+```
+
+---
+
 ## v1.8 — Causal Intelligence Infrastructure ✅ CONCLUÍDA
 
 **Data:** Maio 2026  
