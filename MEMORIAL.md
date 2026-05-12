@@ -2182,8 +2182,8 @@ Implementação do Snapshot Engine (SQL) para análise comparativa D-1 vs D-8 co
 ### v1.9.2 — Narrative Generator: AI Diagnostic Layer ✅ CONCLUÍDA
 
 **Data de conclusão:** 2026-05-12  
-**Commit:** `1d511ad` — `feat(ai): high-resolution narrative engine with funnel analysis (v1.9.2)`  
-**Status:** IA integrada com suporte a funil completo (CTR/CPC), aguardando implementação de UI.
+**Commit:** `ced01b7` — `feat(ai): high-resolution diagnostic engine with [PREVIEW] transparency flags`  
+**Status:** IA integrada com suporte a funil completo (CTR/CPC) e sistema de segurança que diferencia dados reais de simulações de teste. Aguardando implementação de UI.
 
 Camada de inteligência que traduz os deltas numéricos da v1.9.1 em narrativas diagnósticas acionáveis via Google Gemini 1.5. Refatorada em duas iterações: geração básica (spend/conversions/cpa) → alta resolução com padrões de funil completo (CTR/CPC).
 
@@ -2212,9 +2212,17 @@ Camada de inteligência que traduz os deltas numéricos da v1.9.1 em narrativas 
 
 | Arquivo | Tipo | Descrição |
 |---|---|---|
-| `backend/connectors/ai_narrative.py` | Módulo Python | Integração Gemini + HIGH-RESOLUTION system prompt |
-| `backend/tests/test_ai_narrative.py` | Teste Python | 10 rows com CTR/CPC, 4 mock + 1 live |
+| `backend/connectors/ai_narrative.py` | Módulo Python | Integração Gemini + HIGH-RESOLUTION system prompt + transparency flags |
+| `backend/tests/test_ai_narrative.py` | Teste Python | 10 rows com CTR/CPC, 4 mock + 1 live, validação de `is_simulated` |
 | `docs/sql/fn_campaign_snapshot_delta.sql` | SQL doc | v3 rolling window, alias fix, 6 métricas |
+
+#### Sistema de transparência (Preview vs Live)
+
+- `generate_narrative(is_simulated=True)` — quando os dados são simulados/de teste:
+  - `insight_summary` recebe prefixo `[PREVIEW DE TESTE]` automaticamente
+  - Campo `is_simulated: true` no JSON de saída sinaliza a origem ao frontend
+- Dados reais de produção (`is_simulated=False`, default): output sem prefixo, `is_simulated: false`
+- O sistema de testes sempre chama com `is_simulated=True`; o frontend chama com `False` ao usar `fn_campaign_snapshot_delta`
 
 #### Observações técnicas registradas
 
