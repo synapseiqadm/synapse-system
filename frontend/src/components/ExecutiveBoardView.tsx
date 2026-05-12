@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { createClient } from "@/utils/supabase/client";
 import { DEFAULT_WORKSPACE } from "@/lib/workspace";
+import { AINarrativeCard } from "@/components/AINarrativeCard";
 import { computeDecisionBrief, type Ga4DecisionInput } from "@/lib/decision";
 import {
   computeHealth, latestPerExpectedSource, timeAgo, EXPECTED_SOURCES,
@@ -529,6 +530,9 @@ export function ExecutiveBoardView() {
 
   return (
     <div className="space-y-3">
+
+      {/* 0 ── Executive Insight — AI diagnostic (mock; live: fn_campaign_snapshot_delta) */}
+      <AINarrativeCard />
 
       {/* 1 ── Saúde Operacional — compact status strip ───────────────────── */}
       <div className="bg-[#0f1117] border border-zinc-800/60 rounded-xl px-4 py-2.5 flex items-center gap-4 flex-wrap">

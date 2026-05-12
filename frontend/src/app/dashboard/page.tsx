@@ -11,6 +11,7 @@ import { GrowthIntelligenceView } from "@/components/GrowthIntelligenceView";
 import { DataQualityView }        from "@/components/DataQualityView";
 import { InsightsView }           from "@/components/InsightsView";
 import { ExecutiveBoardView }     from "@/components/ExecutiveBoardView";
+import { AINarrativeCard }        from "@/components/AINarrativeCard";
 import { DEFAULT_WORKSPACE }      from "@/lib/workspace";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -27,7 +28,10 @@ interface CampaignRow {
   cost:             number;
   conversions:      number;
   roas:             number;
+  clicks:           number;
+  ctr:              number;
   date_range_start: string;
+  date_range_end:   string;
 }
 
 interface KeywordRow {
@@ -210,7 +214,7 @@ function CampaignCard({ campaign, totalCost }: { campaign: CampaignRow; totalCos
         </span>
       </div>
 
-      <div className="flex items-end justify-between mb-4">
+      <div className="flex items-end justify-between mb-2">
         <div>
           <p className="text-[10px] text-zinc-600 uppercase tracking-wider mb-0.5">Custo</p>
           <p className="text-base font-bold text-white font-mono">
@@ -220,6 +224,28 @@ function CampaignCard({ campaign, totalCost }: { campaign: CampaignRow; totalCos
         <div className="text-right">
           <p className="text-[10px] text-zinc-600 uppercase tracking-wider mb-0.5">Conversões</p>
           <p className="text-base font-bold text-zinc-300 font-mono">{campaign.conversions}</p>
+        </div>
+      </div>
+
+      {/* Funnel efficiency row — CTR + CPC */}
+      <div className="flex items-center justify-between mb-3 pt-2 border-t border-zinc-800/30">
+        <div>
+          <p className="text-[9px] text-zinc-600 uppercase tracking-wider mb-0.5">CTR</p>
+          <p className="text-xs font-semibold text-zinc-400 font-mono">
+            {campaign.clicks > 0
+              ? (campaign.ctr * 100).toFixed(2).replace(".", ",") + "%"
+              : "—"}
+          </p>
+        </div>
+        <div className="text-right">
+          <p className="text-[9px] text-zinc-600 uppercase tracking-wider mb-0.5">CPC</p>
+          <p className="text-xs font-semibold text-zinc-400 font-mono">
+            {campaign.clicks > 0
+              ? (campaign.cost / campaign.clicks).toLocaleString("pt-BR", {
+                  style: "currency", currency: "BRL",
+                })
+              : "—"}
+          </p>
         </div>
       </div>
 
@@ -475,10 +501,19 @@ export default function DashboardPage() {
       setCampaignsLoading(true);
       const { data } = await supabase
         .from("campaign_summary")
-        .select("campaign_id, campaign_name, cost, conversions, roas, date_range_start")
+        .select("campaign_id, campaign_name, cost, conversions, roas, clicks, ctr, date_range_start, date_range_end")
         .eq("workspace_id", DEFAULT_WORKSPACE.id)
-        .order("cost", { ascending: false });
-      setCampaigns((data as CampaignRow[]) ?? []);
+        .eq("is_mock", false)
+        .order("date_range_end", { ascending: false })
+        .order("cost",           { ascending: false });
+      // Keep only the most recent snapshot per campaign.
+      const seen = new Set<string>();
+      const deduped = ((data as CampaignRow[]) ?? []).filter(row => {
+        if (seen.has(row.campaign_id)) return false;
+        seen.add(row.campaign_id);
+        return true;
+      });
+      setCampaigns(deduped);
       setCampaignsLoading(false);
     }
     fetchCampaigns();
