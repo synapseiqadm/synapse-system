@@ -14,7 +14,7 @@ import {
 
 const NAV = [
   { id: "dashboard",  icon: LayoutDashboard, label: "Dashboard",         href: "/dashboard" },
-  { id: "agents",     icon: Bot,             label: "Agentes de IA",     href: "/agents", badge: "Preview" },
+  { id: "agents",     icon: Bot,             label: "Agentes de IA",     href: "/agents" },
   { id: "connectors", icon: Plug2,           label: "Conectores Google", href: "/connectors" },
   { id: "logs",       icon: ScrollText,      label: "Status do Sync",    href: "/logs" },
 ];
@@ -53,7 +53,7 @@ export function Sidebar({ active, onNavigate }: SidebarProps) {
 
       {/* Nav */}
       <nav className="flex-1 p-2 space-y-0.5 mt-1">
-        {NAV.map(({ id, icon: Icon, label, badge, href }) => {
+        {NAV.map(({ id, icon: Icon, label, href }) => {
           const isActive = active === id;
           return (
             <button
@@ -72,11 +72,6 @@ export function Sidebar({ active, onNavigate }: SidebarProps) {
               {!collapsed && (
                 <>
                   <span className="flex-1 text-left">{label}</span>
-                  {badge && (
-                    <span className="text-[10px] bg-violet-500/25 text-violet-300 px-1.5 py-0.5 rounded-full font-semibold">
-                      {badge}
-                    </span>
-                  )}
                 </>
               )}
             </button>

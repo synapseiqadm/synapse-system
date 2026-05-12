@@ -26,6 +26,7 @@ export interface Decision {
   status: DecisionStatus;
   value?: string;
   query?: string;
+  rationale?: string;
 }
 
 const TYPE_CFG: Record<DecisionType, {
@@ -175,6 +176,14 @@ export function AgentDecisionFeed({ decisions, filterAgentId }: AgentDecisionFee
                   <div className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-lg mb-2">
                     <Zap size={9} />
                     {d.value}
+                  </div>
+                )}
+
+                {/* Rationale chip */}
+                {d.rationale && (
+                  <div className="mb-2 bg-[#060a14] border border-[#1a2540] rounded-lg px-2.5 py-1.5">
+                    <p className="text-[9px] text-slate-600 mb-0.5 uppercase tracking-wide font-semibold">Raciocínio</p>
+                    <p className="text-[10px] text-slate-500 leading-relaxed">{d.rationale}</p>
                   </div>
                 )}
 
