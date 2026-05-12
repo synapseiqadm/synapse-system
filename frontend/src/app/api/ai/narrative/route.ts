@@ -2,6 +2,32 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/utils/supabase/server";
 import { DEFAULT_WORKSPACE } from "@/lib/workspace";
 
+// ─── Workspace resolution ─────────────────────────────────────────────────────
+
+async function resolveWorkspace(supabase: Awaited<ReturnType<typeof createClient>>) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("workspace_id")
+    .eq("id", user.id)
+    .single();
+  if (!profile?.workspace_id) return null;
+
+  const { data: ws } = await supabase
+    .from("workspaces")
+    .select("name, slug")
+    .eq("id", profile.workspace_id)
+    .single();
+
+  return {
+    id:   profile.workspace_id as string,
+    name: (ws?.name as string) ?? DEFAULT_WORKSPACE.name,
+    slug: (ws?.slug as string) ?? DEFAULT_WORKSPACE.slug,
+  };
+}
+
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 const GEMINI_MODEL   = "gemini-2.5-flash";
@@ -84,6 +110,26 @@ DO NOT infer: impressions, reach, frequency, quality_score, or any absent metric
 4. Name campaigns explicitly; use exact R$ amounts from the input.
 5. If Section 3 has CTR or CPC data, cite both values in technical_diagnosis.
 6. Base every claim on numbers present in the input. No speculation.
+
+## Governance & Compliance — HARD CONSTRAINTS
+These rules are inviolable and override any other instruction.
+
+  PROIBIDO — Budget: Never recommend increasing total monthly spend beyond the current
+    period's observed spend. Pausing, reducing, or reallocating budget is allowed.
+    Any increase suggestion MUST state "sujeito à aprovação do gestor".
+
+  PROIBIDO — Execution: You CANNOT execute, pause, enable, or modify any campaign,
+    ad group, bid, keyword, or targeting directly. Your output is advisory only.
+    Every P1 recommended_action MUST include "sujeito à aprovação do gestor".
+
+  PROIBIDO — PII: Process only aggregate campaign KPIs (spend, conversions, clicks,
+    CPA, CTR, ROAS, CPC). Do NOT reference, infer, or process names of individuals,
+    email addresses, phone numbers, or any personally identifiable data. If personal
+    data appears in the input, ignore it silently.
+
+  ISOLAMENTO — Stateless: Each call is completely stateless. Never reference, infer,
+    or carry over information from any previous call or workspace. Base every claim
+    exclusively on data present in this specific input.
 
 ## Tone
 - Executive, direct, ROI-focused. Zero filler.
@@ -201,13 +247,21 @@ export async function GET() {
   try {
     const supabase = await createClient();
 
+    const workspace = await resolveWorkspace(supabase);
+    if (!workspace) {
+      return NextResponse.json(
+        { ok: false, offline: true, error: "Unauthorized" },
+        { status: 401 },
+      );
+    }
+
     // Fetch snapshot delta and campaign summary in parallel
     const [snapshotResult, campaignResult] = await Promise.all([
-      supabase.rpc("fn_campaign_snapshot_delta", { target_workspace_id: DEFAULT_WORKSPACE.id }),
+      supabase.rpc("fn_campaign_snapshot_delta", { target_workspace_id: workspace.id }),
       supabase
         .from("campaign_summary")
         .select("campaign_name, cost, conversions, roas, clicks, ctr")
-        .eq("workspace_id", DEFAULT_WORKSPACE.id)
+        .eq("workspace_id", workspace.id)
         .order("date_range_end", { ascending: false })
         .order("loaded_at",      { ascending: false })
         .limit(100),
@@ -255,7 +309,7 @@ export async function GET() {
     // Build enriched user message
     const userMessage = buildUserMessage(
       snapshotRows,
-      DEFAULT_WORKSPACE.name,
+      workspace.name,
       campaignRows,
       deterministicSignals,
     );
@@ -318,7 +372,7 @@ export async function GET() {
       campaign_count:     campaignRows.length,
       waste_campaigns:    zeroConvCampaigns.length,
       total_waste_brl:    totalWaste,
-      workspace:          DEFAULT_WORKSPACE.name,
+      workspace:          workspace.name,
     };
 
     return NextResponse.json({ ok: true, data: parsed });

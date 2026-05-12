@@ -5,7 +5,7 @@ import Link from "next/link";
 import {
   LayoutGrid, Radio, Settings,
   Loader2, Search, Tag, Megaphone, Hash, ChevronRight,
-  ShieldCheck, Lightbulb, Building2, Activity, Database,
+  ShieldCheck, Lightbulb, Building2, Activity, Database, LogOut,
 } from "lucide-react";
 import { GrowthIntelligenceView } from "@/components/GrowthIntelligenceView";
 import { DataQualityView }        from "@/components/DataQualityView";
@@ -78,8 +78,22 @@ function NavBtn({ id, label, icon: Icon, sub = false, active, onNavigate }: NavB
   );
 }
 
-function DashSidebar({ active, onNavigate }: { active: NavItem; onNavigate: (n: NavItem) => void }) {
+function DashSidebar({
+  active,
+  onNavigate,
+  userEmail,
+}: {
+  active: NavItem;
+  onNavigate: (n: NavItem) => void;
+  userEmail: string;
+}) {
   const inCampanhasGroup = active === "campanhas" || active === "keywords";
+
+  async function handleLogout() {
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    window.location.href = "/login";
+  }
 
   return (
     <aside className="w-52 flex-shrink-0 flex flex-col bg-[#09090b] border-r border-zinc-800/60">
@@ -149,17 +163,21 @@ function DashSidebar({ active, onNavigate }: { active: NavItem; onNavigate: (n: 
         <NavBtn id="configuracoes" label="Configurações" icon={Settings}    active={active} onNavigate={onNavigate} />
       </nav>
 
-      {/* Workspace badge */}
-      <div className="p-4 border-t border-zinc-800/60">
-        <div className="flex items-center gap-2.5">
-          <div className="w-7 h-7 rounded-full bg-gradient-to-br from-indigo-500 to-violet-500 flex items-center justify-center text-xs font-bold text-white">
-            {DEFAULT_WORKSPACE.slug[0].toUpperCase()}
+      {/* User + logout */}
+      <div className="p-3 border-t border-zinc-800/60 space-y-1">
+        <div className="flex items-center gap-2 px-1">
+          <div className="w-6 h-6 rounded-full bg-gradient-to-br from-indigo-500 to-violet-500 flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0">
+            {(userEmail[0] ?? "?").toUpperCase()}
           </div>
-          <div>
-            <p className="text-xs font-semibold text-zinc-200">{DEFAULT_WORKSPACE.name}</p>
-            <p className="text-[10px] text-zinc-600">workspace</p>
-          </div>
+          <p className="text-[10px] text-zinc-400 truncate flex-1 min-w-0">{userEmail || "…"}</p>
         </div>
+        <button
+          onClick={handleLogout}
+          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-[11px] text-zinc-600 hover:text-red-400 hover:bg-red-500/5 transition-colors"
+        >
+          <LogOut size={11} />
+          Sair
+        </button>
       </div>
     </aside>
   );
@@ -488,13 +506,20 @@ const NAV_META: Record<NavItem, { title: string; subtitle: string }> = {
 export default function DashboardPage() {
   const supabase = createClient();
 
-  const [nav, setNav] = useState<NavItem>("geral");
+  const [nav, setNav]           = useState<NavItem>("geral");
+  const [userEmail, setUserEmail] = useState("");
 
   const [campaigns, setCampaigns]               = useState<CampaignRow[]>([]);
   const [campaignsLoading, setCampaignsLoading] = useState(true);
 
   const [keywords, setKeywords]               = useState<KeywordRow[]>([]);
   const [keywordsLoading, setKeywordsLoading] = useState(true);
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (user?.email) setUserEmail(user.email);
+    });
+  }, []);
 
   useEffect(() => {
     async function fetchCampaigns() {
@@ -537,7 +562,7 @@ export default function DashboardPage() {
 
   return (
     <div className="flex h-screen bg-[#09090b] text-slate-200 overflow-hidden font-sans">
-      <DashSidebar active={nav} onNavigate={setNav} />
+      <DashSidebar active={nav} onNavigate={setNav} userEmail={userEmail} />
 
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
@@ -546,9 +571,16 @@ export default function DashboardPage() {
             <h1 className="text-sm font-bold text-white">{meta.title}</h1>
             <p className="text-[10px] text-zinc-600 font-mono">{meta.subtitle}</p>
           </div>
-          <div className="flex items-center gap-1.5 bg-indigo-500/10 border border-indigo-500/20 rounded-full px-2.5 py-1">
-            <Building2 size={11} className="text-indigo-400" />
-            <span className="text-[11px] font-medium text-indigo-300">{DEFAULT_WORKSPACE.name}</span>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1.5 bg-indigo-500/10 border border-indigo-500/20 rounded-full px-2.5 py-1">
+              <Building2 size={11} className="text-indigo-400" />
+              <span className="text-[11px] font-medium text-indigo-300">{DEFAULT_WORKSPACE.name}</span>
+            </div>
+            {userEmail && (
+              <span className="text-[10px] text-zinc-600 font-mono hidden sm:block truncate max-w-[180px]">
+                {userEmail}
+              </span>
+            )}
           </div>
         </header>
 

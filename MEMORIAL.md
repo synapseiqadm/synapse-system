@@ -2687,3 +2687,179 @@ Output live com SIMULATED_SNAPSHOT (10 delta rows, padrão HIGH-RESOLUTION):
 | `Promise.all` para snapshot + campaign_summary | Queries independentes — paralelismo reduz latência total do handler |
 | `_meta` inclui `waste_campaigns` e `total_waste_brl` | Rastreabilidade: permite verificar quanto waste foi detectado e passado ao Gemini |
 | `GEMINI_API_KEY` em `frontend/.env.local` sem `NEXT_PUBLIC_` | Chave nunca exposta ao bundle do browser; validada no topo do handler com return 503 se ausente |
+
+---
+
+## v2.1 — Auth Shield: Blindagem, Governança e RLS
+
+**Data:** Maio 2026
+
+### Objetivo
+
+Transformar o SynapseIQ de dashboard MVP sem autenticação em plataforma multi-tenant segura, com sessão Supabase Auth real, RLS workspace-scoped enforçado por `auth.uid()`, governança de IA inviolável e UI de identidade do utilizador.
+
+---
+
+### 2.1.1 — Autenticação (Middleware)
+
+O `frontend/src/proxy.ts` (Edge Middleware) já protegia `/dashboard` via `supabase.auth.getSession()` → redirect para `/login` quando sem sessão. Nenhuma alteração necessária — funcional desde v1.x.
+
+---
+
+### 2.1.2 — Workspace Dinâmico (Eliminar Hardcoded workspace_id)
+
+**Problema:** `narrative/route.ts` usava `DEFAULT_WORKSPACE.id` (UUID hardcoded) para todas as queries Supabase, independente do utilizador autenticado.
+
+**Solução:** Função `resolveWorkspace(supabase)` adicionada ao topo do route handler:
+
+```typescript
+async function resolveWorkspace(supabase) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+  const { data: profile } = await supabase
+    .from("profiles").select("workspace_id").eq("id", user.id).single();
+  if (!profile?.workspace_id) return null;
+  const { data: ws } = await supabase
+    .from("workspaces").select("name, slug").eq("id", profile.workspace_id).single();
+  return {
+    id:   profile.workspace_id,
+    name: ws?.name ?? DEFAULT_WORKSPACE.name,
+    slug: ws?.slug ?? DEFAULT_WORKSPACE.slug,
+  };
+}
+```
+
+- GET handler agora chama `resolveWorkspace()` → retorna HTTP 401 se `null`
+- Todas as queries usam `workspace.id` / `workspace.name` da sessão
+- `profiles` é a fonte de verdade: `profiles.id = auth.uid()` → `profiles.workspace_id`
+
+---
+
+### 2.1.3 — Populamento de `profiles` e correção de `workspaces`
+
+Ações executadas via Supabase MCP (SQL direto — não em migration file pois são dados, não schema):
+
+```sql
+-- Corrigir nome do workspace (era "woke")
+UPDATE workspaces SET name = 'Woke People' WHERE id = 'a082fe86-...';
+
+-- Mapear utilizadores ao workspace Woke
+INSERT INTO profiles (id, workspace_id, role, created_at)
+VALUES
+  ('487a1072-...', 'a082fe86-...', 'admin', now()),
+  ('58980a4c-...', 'a082fe86-...', 'user',  now());
+```
+
+| Email | Auth UID | Role |
+|---|---|---|
+| `ervin.moriyama@gmail.com` | `487a1072-...` | admin |
+| `tosi.gabriel@gmail.com` | `58980a4c-...` | user |
+
+---
+
+### 2.1.4 — RLS Hardening (Migration 013)
+
+**Arquivo:** `supabase/migrations/013_rls_hardening.sql`
+
+Substitui todas as políticas `TO public USING (true)` por políticas `TO authenticated` scoped ao workspace do utilizador via `profiles.workspace_id = auth.uid()`.
+
+**Padrão aplicado (12 tabelas de dados):**
+
+```sql
+DROP POLICY IF EXISTS "<nome-antigo>" ON public.<tabela>;
+CREATE POLICY "<tabela>_select_authenticated"
+  ON public.<tabela>
+  FOR SELECT
+  TO authenticated
+  USING (
+    workspace_id = (
+      SELECT workspace_id FROM public.profiles WHERE id = auth.uid()
+    )
+  );
+```
+
+**Casos especiais:**
+
+| Tabela | Particularidade |
+|---|---|
+| `semantic_governance_evidence` | Sem `workspace_id` direto — join via `semantic_governance_findings` |
+| `insight_feed` | Adicionada também policy UPDATE (`insight_feed_update_authenticated`) para ações de status (Revisar/Resolver/Descartar) |
+| `profiles` | Restrita ao próprio utilizador: `USING (id = auth.uid())` |
+| `workspaces` | Política `"Allow authenticated read"` existente mantida (sem `workspace_id` — leitura livre para autenticados) |
+| `kpi_cache_daily` | 3 policies conflituosas removidas → 1 policy limpa auth-scoped criada |
+
+**Impacto no backend Python:** o pipeline usa `SUPABASE_SERVICE_KEY` que bypassa RLS inteiramente. Nenhuma alteração necessária no backend.
+
+---
+
+### 2.1.5 — Governança de IA (HARD CONSTRAINTS no SYSTEM_PROMPT)
+
+Secção `## Governance & Compliance — HARD CONSTRAINTS` adicionada ao `SYSTEM_PROMPT` em **dois ficheiros** (Python e TypeScript — devem permanecer sincronizados):
+
+- `backend/connectors/ai_narrative.py`
+- `frontend/src/app/api/ai/narrative/route.ts`
+
+Quatro constraints invioláveis:
+
+| Constraint | Regra |
+|---|---|
+| **PROIBIDO — Budget** | Nunca recomendar aumento de spend além do período observado. Qualquer aumento DEVE conter "sujeito à aprovação do gestor" |
+| **PROIBIDO — Execution** | IA não pode executar, pausar ou modificar campanhas diretamente. Output é advisory only. P1 MUST include "sujeito à aprovação do gestor" |
+| **PROIBIDO — PII** | Processar apenas KPIs agregados. Dados pessoais no input são ignorados silenciosamente |
+| **ISOLAMENTO — Stateless** | Cada chamada é completamente stateless. Nenhuma informação de chamadas anteriores ou outros workspaces |
+
+---
+
+### 2.1.6 — UI de Identidade (Dashboard)
+
+**`frontend/src/app/dashboard/page.tsx`** — alterações em `DashSidebar`:
+
+- `LogOut` adicionado aos imports de `lucide-react`
+- Signature: `function DashSidebar({ active, onNavigate, userEmail })`
+- Bottom da sidebar: badge de workspace substituído por email do utilizador + botão Sair:
+  - Avatar circular com inicial do email (gradiente indigo-violet)
+  - Email truncado (text-[10px], max-w truncado)
+  - Botão "Sair" com `LogOut size={11}` — chama `supabase.auth.signOut()` + `window.location.href = "/login"`
+- Header: workspace pill `Building2 + "Woke People"` + email do utilizador visível (font-mono, hidden sm:block)
+- `DashboardPage`: `useEffect` busca `supabase.auth.getUser()` → popula `userEmail` state
+
+**`frontend/src/app/login/page.tsx`** — limpeza de segurança:
+
+- Removidos: `alert()` de debug e `console.error` com URL/key do Supabase no output
+- Error handling simplificado: `setError(error.message)` apenas
+
+---
+
+### 2.1.7 — Estado pós-v2.1
+
+| Dimensão | Antes (v2.0.1) | Depois (v2.1) |
+|---|---|---|
+| Auth no dashboard | Middleware protege rota, mas queries usam UUID hardcoded | Sessão real → workspace derivado de `profiles` |
+| RLS | `TO public USING (true)` em 12 tabelas | `TO authenticated` scoped ao `profiles.workspace_id` |
+| AI governance | Sem constraints explícitas no SYSTEM_PROMPT | 4 HARD CONSTRAINTS invioláveis |
+| UI identidade | Sem email/logout | Email + avatar + botão Sair na sidebar |
+| `profiles` | 0 linhas (bloqueava resolução de workspace) | 2 linhas — ervin + gabriel → workspace Woke |
+| Debug leaks | `alert()` e `console.error` na `/login` | Removidos |
+
+### Segurança pós-v2.1 — Verificações obrigatórias
+
+```bash
+grep SUPABASE_SERVICE_KEY frontend/src  # deve retornar 0 resultados
+grep sb_secret frontend/src             # deve retornar 0 resultados
+```
+
+Ambas passam — service key exclusiva ao backend Python e GitHub Actions.
+
+### PAUSE — Validação pendente
+
+**Aguardar que o Gestor realize o primeiro login oficial para validar a sessão dinâmica.** O critério de conclusão da v2.1 é: login com `tosi.gabriel@gmail.com` no dashboard em produção → card AI Narrative carrega com dados reais do workspace Woke People (sem erros 401 ou workspace nulo).
+
+### Arquivos modificados
+
+| Arquivo | Tipo | O que mudou |
+|---|---|---|
+| `frontend/src/app/api/ai/narrative/route.ts` | Modificado | `resolveWorkspace()` + queries via sessão + governance guards no SYSTEM_PROMPT |
+| `backend/connectors/ai_narrative.py` | Modificado | Governance HARD CONSTRAINTS no SYSTEM_PROMPT; `_build_user_message` (já entregue em v2.0.1) |
+| `frontend/src/app/dashboard/page.tsx` | Modificado | User email + logout em `DashSidebar`; email no header |
+| `frontend/src/app/login/page.tsx` | Modificado | `alert()` e `console.error` removidos |
+| `supabase/migrations/013_rls_hardening.sql` | **Novo** | RLS workspace-scoped para 12 tabelas de dados |
