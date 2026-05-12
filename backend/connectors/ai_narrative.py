@@ -108,7 +108,7 @@ Respond with a single valid JSON object and NOTHING else.
 No markdown code fences. No explanation. No trailing text.
 
 {
-  "insight_summary": "<one sentence, max 120 chars, in pt-BR, stating the key impact>",
+  "insight_summary": "<one sentence, max 100 chars, in pt-BR, stating the key impact>",
   "technical_diagnosis": "<2-3 sentences in English: which campaign, which pattern, what the numbers show — must cite CTR or CPC if present in input>",
   "recommended_action": "<one specific, executable action in pt-BR for the account manager>",
   "priority_score": <integer 1–5>
@@ -141,6 +141,7 @@ def _build_user_message(snapshot_rows: list[dict], workspace_name: str) -> str:
 def generate_narrative(
     snapshot_rows: list[dict],
     workspace_name: str = "Woke People",
+    is_simulated: bool = False,
 ) -> dict[str, Any]:
     """
     Call Gemini 1.5 with snapshot delta rows and return a structured diagnostic.
@@ -148,10 +149,12 @@ def generate_narrative(
     Args:
         snapshot_rows : output of fn_campaign_snapshot_delta() (may be empty list)
         workspace_name: display name of the workspace (for prompt context)
+        is_simulated  : when True, prefixes insight_summary with "[PREVIEW DE TESTE]"
+                        and sets is_simulated=True in the response
 
     Returns:
         dict with keys: insight_summary, technical_diagnosis,
-                        recommended_action, priority_score, _meta
+                        recommended_action, priority_score, is_simulated, _meta
 
     Raises:
         EnvironmentError : GEMINI_API_KEY not configured
@@ -203,6 +206,10 @@ def generate_narrative(
     if not isinstance(score, int) or score not in range(1, 6):
         raise ValueError(f"priority_score must be an integer 1–5, got: {score!r}")
 
+    if is_simulated:
+        parsed["insight_summary"] = "[PREVIEW DE TESTE] " + parsed["insight_summary"]
+
+    parsed["is_simulated"] = is_simulated
     parsed["_meta"] = {
         "model":      GEMINI_MODEL,
         "latency_ms": latency_ms,

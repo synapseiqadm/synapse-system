@@ -187,10 +187,14 @@ class TestAINarrative(unittest.TestCase):
             original_key = ai_narrative.GEMINI_API_KEY
             ai_narrative.GEMINI_API_KEY = "mock-key-for-test"
             try:
-                result = ai_narrative.generate_narrative(SIMULATED_SNAPSHOT)
+                result = ai_narrative.generate_narrative(
+                    SIMULATED_SNAPSHOT, is_simulated=True
+                )
             finally:
                 ai_narrative.GEMINI_API_KEY = original_key
 
+        self.assertTrue(result["is_simulated"])
+        self.assertTrue(result["insight_summary"].startswith("[PREVIEW DE TESTE] "))
         self._assert_schema(result)
         self._print_exchange(result, mode="MOCK")
 
@@ -249,11 +253,17 @@ class TestAINarrative(unittest.TestCase):
         self.assertIn("technical_diagnosis", result)
         self.assertIn("recommended_action",  result)
         self.assertIn("priority_score",      result)
+        self.assertIn("is_simulated",        result)
         self.assertIn("_meta",               result)
         self.assertIsInstance(result["priority_score"], int)
         self.assertIn(result["priority_score"], range(1, 6))
         self.assertIsInstance(result["insight_summary"], str)
-        self.assertLessEqual(len(result["insight_summary"]), 120)
+        self.assertIsInstance(result["is_simulated"], bool)
+        # Strip [PREVIEW DE TESTE] prefix before checking the 100-char body limit.
+        body = result["insight_summary"]
+        if body.startswith("[PREVIEW DE TESTE] "):
+            body = body[len("[PREVIEW DE TESTE] "):]
+        self.assertLessEqual(len(body), 100)
 
     def _print_exchange(self, result: dict, mode: str) -> None:
         div = "-" * 60
