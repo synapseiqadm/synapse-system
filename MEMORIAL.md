@@ -2371,41 +2371,65 @@ Capacidades previstas:
 
 ---
 
-### v1.9.5 — Official Intelligence Activation: GCP Migration 🔄 EM PREPARAÇÃO
+### v1.9.5 — Official Intelligence Activation: GCP Migration ✅ CONCLUÍDA
 
-**Data:** 2026-05-12  
-**Status:** Backend pronto. Aguardando injeção de `GEMINI_API_KEY` pelo Gestor para execução do live test.
+**Data de conclusão:** 2026-05-12  
+**Status:** `GEMINI_API_KEY` injetada no `backend/.env`. API Generative Language habilitada no GCP (`synapsesystem`, projeto `913273994755`). Bootstrap de testes corrigido (`load_dotenv` antes de `import ai_narrative`). Live test passou após migração de modelo em v1.9.6.
+
+#### O que foi entregue
+
+- `backend/.env`: `GEMINI_API_KEY` configurada (não rastreada pelo git, `.gitignore` dupla cobertura)
+- GCP Console → `synapsesystem` → APIs & Services → Generative Language API habilitada
+- `test_ai_narrative.py`: bootstrap corrigido — `load_dotenv(_ENV_PATH, override=False)` antes de `import ai_narrative` (GEMINI_API_KEY é capturada em module-level no import; sem dotenv antes, `os.getenv()` retornava `""` e o teste pulava)
+- `test_live_api_call` agora detecta modo `LIVE` e executa chamada real ao Gemini
+
+#### Arquivos
+
+| Arquivo | Tipo | Descrição |
+|---|---|---|
+| `backend/.env` | Config (não versionado) | GEMINI_API_KEY injetada |
+| `backend/tests/test_ai_narrative.py` | Teste Python | Bootstrap com `load_dotenv` antes de `import ai_narrative` |
+
+---
+
+### v1.9.6 — Model ID Alignment: gemini-2.5-flash ✅ CONCLUÍDA
+
+**Data de conclusão:** 2026-05-12  
+**Commit:** `ac77d69`
 
 #### Objetivo
 
-Ativar o motor de diagnóstico Gemini 1.5 em modo produção, substituindo o mock pela chamada real à API oficial do projeto `synapsesystem` no Google Cloud.
+Resolver 404 `NOT_FOUND` para `gemini-1.5-flash` e `gemini-2.0-flash` (não disponíveis para novos projetos GCP na API v1beta). Migrar para `gemini-2.5-flash` e resolver truncamento de output.
 
-#### Estado do backend (pré-ativação)
+#### O que foi entregue
 
-| Componente | Estado | Detalhe |
+- `GEMINI_MODEL`: `"gemini-1.5-flash"` → `"gemini-2.5-flash"` (confirmado via `client.models.list()` como disponível para o projeto)
+- `max_output_tokens`: `512` → `2048` — 512 causava truncamento mid-UTF-8 nas respostas em português do gemini-2.5-flash (que usa mais tokens que o 1.5 para o mesmo conteúdo)
+- Guard de 100 chars no `insight_summary`: se o modelo excede o limite, trunca no último espaço antes de 97 chars e adiciona `"..."` — contrato de UI preservado sem depender de compliance do modelo
+
+#### Evidência de produção
+
+```
+[LIVE] model: gemini-2.5-flash  latency_ms: 6359  row_count: 10
+insight_summary  : "O CPA da campanha 'Woke | Conscientização | Agosto' dobrou, indicando fadiga criativa e perda de..."
+technical_diagnosis (EN): CPA +100.43% (R$44.55→R$89.29), CTR -34.93% (3.35%→2.18%), HIGH-RESOLUTION pattern CPA↑+CTR↓+CPC≈ → creative fatigue
+priority_score: 5
+```
+
+**5/5 testes passaram** (live + 4 mock).
+
+#### Arquivos
+
+| Arquivo | Tipo | Descrição |
 |---|---|---|
-| `ai_narrative.py` | ✅ Pronto | Lê `GEMINI_API_KEY` de `os.getenv()` — zero mock no path de produção |
-| `backend/.env` | ✅ Seguro | Não rastreado pelo git (`.gitignore` dupla cobertura: root + `backend/`) |
-| `test_live_api_call` | ✅ Pronto | Auto-skip sem chave; executa chamada real ao Gemini quando chave presente |
-| `fn_campaign_snapshot_delta` | ✅ Deployed | v3 rolling window aplicada ao Supabase; retornará dados reais a partir de 2026-05-13 (D-8 disponível) |
-| `MOCK_NARRATIVE` (frontend) | ℹ️ Ativo | Permanece no `AINarrativeCard.tsx` até API Route frontend ser implementada |
+| `backend/connectors/ai_narrative.py` | Módulo Python | `GEMINI_MODEL=gemini-2.5-flash`, `max_output_tokens=2048`, guard 100-char summary |
 
-#### Injeção da chave (único passo necessário)
+#### Observações técnicas registradas
 
-Editar `backend/.env` e descomentar:
-```ini
-GEMINI_API_KEY=AIza...   ← chave do projeto synapsesystem
-```
-
-**Fonte:** Google Cloud Console → projeto `synapsesystem` → APIs & Services → Credentials → Create API Key → restringir à `Generative Language API`.
-
-#### Comando de live test
-
-```powershell
-d:\dev\synapse\.venv\Scripts\python.exe -m pytest backend/tests/test_ai_narrative.py::TestAINarrative::test_live_api_call -v -s
-```
-
-**Critério de sucesso:** `1 passed` + JSON com `insight_summary`, `technical_diagnosis`, `recommended_action`, `priority_score` e `_meta.latency_ms > 0`.
+- `gemini-2.0-flash` (bare) e `gemini-1.5-flash` retornam 404 para novos projetos GCP na API `v1beta` — "no longer available to new users".
+- `gemini-2.5-flash` disponível e estável; sem sufixo `-preview`. Alternativas confirmadas via `client.models.list()`: `gemini-2.5-pro`, `gemini-2.0-flash-001`, `gemini-2.0-flash-lite`.
+- `temperature=0.2` mantida — garante output determinístico para diagnósticos factuais.
+- `MOCK_NARRATIVE` no `AINarrativeCard.tsx` permanece ativo — API Route frontend ainda não implementada (próxima fase).
 
 ---
 
