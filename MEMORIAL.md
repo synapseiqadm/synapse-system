@@ -3124,3 +3124,64 @@ O trigger DB `preserve_agent_decision_status` actua como defesa em profundidade 
 | `frontend/src/app/api/agents/decisions/route.ts` | Modificado | Lê `agent_decisions` primeiro; fallback on-the-fly; `dbId` no output |
 | `frontend/src/app/api/agents/action/route.ts` | **Novo** | PATCH — persiste `approved`/`rejected` em `agent_decisions` |
 | `frontend/src/components/AgentDecisionFeed.tsx` | Modificado | `dbId`, async `resolve()`, feedback de aprovação |
+
+---
+
+## v2.2.1 — Bugfix: Persistência de Decisões via UI
+
+**Data:** 2026-05-12
+
+### Problema
+Clicar "Aprovar" actualizava a UI localmente mas após F5 o card voltava a `pending`.
+
+### Causa raiz (dupla)
+1. `agent_decisions` vazia → fallback on-the-fly → `dbId=undefined` → guard `if (d.dbId)` bloqueava o PATCH
+2. `router.refresh()` do Next.js App Router não re-dispara `useEffect(fn, [])` em Client Components
+
+### Fix aplicado
+- Seed de `agent_decisions` via Supabase MCP (2 rows: alert + suggestion do Anomaly Scout com dados reais)
+- `AgentDecisionFeed`: `useRouter` + `onRefresh?: () => void` — após PATCH bem-sucedido chama `router.refresh()` + `onRefresh()`
+- `agents/page.tsx`: extrai `refetch()` do useEffect e passa como prop `onRefresh`
+
+### Validação
+- UUID presente no PATCH payload (não `undefined`)
+- F5 mantém estado "Aprovado" no localhost e em produção
+- `agent_decisions.status = 'approved'` confirmado no Supabase
+
+---
+
+## v2.2.2 — Produção: Activação da Inteligência
+
+**Data:** 2026-05-12
+
+### Problema
+`/api/ai/narrative` retornava **503** em produção — card "Inteligência temporariamente offline".
+
+### Diagnóstico
+Guard na linha 240 de `narrative/route.ts`:
+```typescript
+if (!GEMINI_API_KEY) return NextResponse.json({ ok: false, offline: true }, { status: 503 });
+```
+`GEMINI_API_KEY` não estava definida nas env vars do Vercel (apenas em `frontend/.env.local`).
+
+### Fix aplicado
+1. `GEMINI_API_KEY` adicionada ao vault Vercel (Production + Preview) via dashboard
+2. Vercel disparou redeploy automático ao detectar nova env var
+3. Fix secundário: `p_workspace_id` → `target_workspace_id` em `backend/connectors/a_data_sync.py` (param incorreto na chamada `fn_campaign_snapshot_delta`)
+4. Push do fix → commit `7bb3b0a`
+
+### Validação
+- Logs Vercel: 503 eliminados; requests autenticados retornam 200 com diagnóstico Gemini
+- Requests não autenticados (MCP, curl sem sessão) retornam 401 — comportamento correcto
+- Persistência de aprovação testada e validada em produção
+
+### Arquivos modificados
+| Arquivo | Alteração |
+|---|---|
+| `frontend/src/components/AgentDecisionFeed.tsx` | `useRouter`, `onRefresh` prop, `router.refresh()` após PATCH |
+| `frontend/src/app/agents/page.tsx` | `refetch()` extraído, `onRefresh={refetch}` passado ao Feed |
+| `backend/connectors/a_data_sync.py` | `p_workspace_id` → `target_workspace_id` |
+
+### Notas de segurança
+- `GEMINI_API_KEY` no vault Vercel (encriptado) — nunca no git
+- `SUPABASE_SERVICE_KEY` continua exclusiva ao backend Python e GitHub Actions
