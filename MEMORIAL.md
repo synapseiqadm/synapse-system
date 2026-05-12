@@ -2179,6 +2179,45 @@ Implementação do Snapshot Engine (SQL) para análise comparativa D-1 vs D-8 co
 - Métricas com `value_then = 0` (linha de base zero) produzem delta `NULL` e são excluídas da saída — comportamento esperado e documentado.
 - Função totalmente parametrizada por `workspace_id`; nenhum UUID está hardcoded na lógica.
 
+### v1.9.2 — Narrative Generator: AI Diagnostic Layer ✅ CONCLUÍDA
+
+**Data de conclusão:** 2026-05-12
+
+Camada de inteligência que traduz os deltas numéricos da v1.9.1 em narrativas diagnósticas acionáveis via Google Gemini 1.5.
+
+#### O que foi entregue
+
+- Módulo `backend/connectors/ai_narrative.py` — integração com a SDK `google-genai` (v2.0.1):
+  - `SYSTEM_PROMPT` rigoroso: persona "Senior Growth Analyst", biblioteca de padrões causais (Spend↑+Conversões↓→saturação, etc.), restrição explícita a metrics disponíveis (spend, conversions, cpa), output JSON-only
+  - `generate_narrative(snapshot_rows, workspace_name)` — chama `gemini-1.5-flash` com `response_mime_type="application/json"`, `temperature=0.2`, valida os 4 campos obrigatórios, anexa `_meta` (model, latency_ms, row_count)
+  - Guard de `GEMINI_API_KEY` ausente com mensagem acionável
+- Suite de testes `backend/tests/test_ai_narrative.py`:
+  - `test_mock_pipeline` — pipeline completo com resposta mockada, imprime input/output completo
+  - `test_missing_api_key_raises` — verifica `EnvironmentError` sem chave
+  - `test_invalid_json_raises` — verifica `ValueError` em resposta não-JSON
+  - `test_missing_field_raises` — verifica `KeyError` em JSON incompleto
+  - `test_live_api_call` — chamada real ao Gemini (skip automático se `GEMINI_API_KEY` ausente)
+- SDK instalada no venv: `google-genai==2.0.1`
+
+#### Resultado de execução (sandbox — mock mode)
+
+```
+4 passed, 1 skipped (live), 1 warning (SDK interno Python 3.14)
+```
+
+#### Arquivos
+
+| Arquivo | Tipo | Descrição |
+|---|---|---|
+| `backend/connectors/ai_narrative.py` | Módulo Python | Integração Gemini + system prompt |
+| `backend/tests/test_ai_narrative.py` | Teste Python | Suite 5 testes (4 mock + 1 live) |
+
+#### Observações técnicas registradas
+
+- `GEMINI_API_KEY` não está no `.env` — live mode requer chave gratuita de `aistudio.google.com/app/apikey`. Adicionar `GEMINI_API_KEY=<chave>` ao `backend/.env`.
+- SDK `google.generativeai` (legado) está deprecated; migração para `google.genai` já aplicada.
+- `temperature=0.2` garante output consistente e factual; subir para 0.4 se narrativas soarem repetitivas.
+
 ---
 
 ## Próximos Passos — v1.9: Explainable AI / Insight Diffs
