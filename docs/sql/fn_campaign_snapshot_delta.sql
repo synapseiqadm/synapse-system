@@ -1,6 +1,10 @@
 -- ============================================================
 -- fn_campaign_snapshot_delta.sql
--- SynapseIQ v1.9.1 — Snapshot Engine: SQL Delta Logic
+-- SynapseIQ v1.9.1-REV — Snapshot Engine: SQL Delta Logic
+--
+-- REVISION HISTORY
+--   v1.9.1  : Initial — spend, conversions, cpa
+--   v1.9.1-REV: Adds clicks, ctr (%), cpc — requires migration 012
 --
 -- Compares campaign performance between two periods:
 --   Period A (date_a) : D-1  — Yesterday
@@ -10,13 +14,25 @@
 -- Grain assumed: one row per (workspace_id, campaign_id, date)
 --   i.e. date_range_start = date_range_end = target_date
 --
--- Available metrics : spend, conversions, cpa (derived)
--- NOTE: campaign_summary has no `clicks` column; cpc cannot be
---       computed. Add clicks to the table to enable that metric.
+-- Available metrics:
+--   spend       — SUM(cost)
+--   conversions — SUM(conversions)
+--   clicks      — SUM(clicks)              [requires migration 012]
+--   cpa         — spend / conversions       (NULL if conversions = 0)
+--   cpc         — spend / clicks            (NULL if clicks = 0)
+--   ctr         — clicks / impressions × 100% (NULL if impressions = 0)
 --
--- Delta formula : ((value_now - value_then) / NULLIF(value_then, 0)) * 100
+-- PREREQUISITE: migration 012 must be applied before executing this
+-- function. Running it without clicks/impressions columns will error.
+--
+-- Delta formula : ((value_now - value_then) / NULLIF(value_then, 0)) × 100
 -- Impact levels : CRITICAL > 50% | SIGNIFICANT > 15%
 -- Output filter : ABS(delta) > 15% only
+--
+-- NOTE ON FUNCTION NAME:
+--   The v1.8/v1.9 spec docs reference "get_performance_snapshot".
+--   The canonical deployed name is fn_campaign_snapshot_delta.
+--   Use this name in all integrations and AI narrative calls.
 -- ============================================================
 
 CREATE OR REPLACE FUNCTION public.fn_campaign_snapshot_delta(
@@ -44,8 +60,10 @@ BEGIN
         -- Aggregate all rows for the workspace on D-1
         SELECT
             cs.campaign_name,
-            SUM(cs.cost)        AS spend,
-            SUM(cs.conversions) AS conversions
+            SUM(cs.cost)                                          AS spend,
+            SUM(cs.conversions)                                   AS conversions,
+            SUM(cs.clicks)                                        AS clicks,
+            SUM(cs.impressions)                                   AS impressions
         FROM public.campaign_summary cs
         WHERE cs.workspace_id    = target_workspace_id
           AND cs.date_range_start = date_a
@@ -58,8 +76,10 @@ BEGIN
         -- Aggregate all rows for the workspace on D-8
         SELECT
             cs.campaign_name,
-            SUM(cs.cost)        AS spend,
-            SUM(cs.conversions) AS conversions
+            SUM(cs.cost)                                          AS spend,
+            SUM(cs.conversions)                                   AS conversions,
+            SUM(cs.clicks)                                        AS clicks,
+            SUM(cs.impressions)                                   AS impressions
         FROM public.campaign_summary cs
         WHERE cs.workspace_id    = target_workspace_id
           AND cs.date_range_start = date_b
@@ -71,12 +91,32 @@ BEGIN
     combined AS (
         -- Full outer join so campaigns absent on one side don't vanish.
         -- Campaigns with spend = 0 in BOTH periods are excluded.
+        -- CTR is computed from aggregated clicks/impressions (CTR is non-additive).
         SELECT
             COALESCE(a.campaign_name, b.campaign_name)::TEXT AS campaign_name,
-            COALESCE(a.spend,        0)                      AS spend_now,
-            COALESCE(b.spend,        0)                      AS spend_then,
-            COALESCE(a.conversions,  0)                      AS conv_now,
-            COALESCE(b.conversions,  0)                      AS conv_then
+
+            -- Spend
+            COALESCE(a.spend,        0) AS spend_now,
+            COALESCE(b.spend,        0) AS spend_then,
+
+            -- Conversions
+            COALESCE(a.conversions,  0) AS conv_now,
+            COALESCE(b.conversions,  0) AS conv_then,
+
+            -- Clicks (raw; used to derive CPC and CTR)
+            COALESCE(a.clicks,       0) AS clicks_now,
+            COALESCE(b.clicks,       0) AS clicks_then,
+
+            -- CTR: recomputed from aggregated clicks/impressions.
+            -- Stored ctr column is NOT used to avoid incorrect summation.
+            -- Expressed as percentage (× 100) for delta readability.
+            CASE WHEN COALESCE(a.impressions, 0) > 0
+                 THEN ROUND((a.clicks::NUMERIC / a.impressions) * 100, 4)
+                 ELSE NULL END AS ctr_now,
+            CASE WHEN COALESCE(b.impressions, 0) > 0
+                 THEN ROUND((b.clicks::NUMERIC / b.impressions) * 100, 4)
+                 ELSE NULL END AS ctr_then
+
         FROM period_a  a
         FULL OUTER JOIN period_b b USING (campaign_name)
         WHERE NOT (COALESCE(a.spend, 0) = 0 AND COALESCE(b.spend, 0) = 0)
@@ -84,6 +124,7 @@ BEGIN
 
     metrics_long AS (
         -- Unpivot to one row per (campaign, metric)
+
         -- spend
         SELECT campaign_name, 'spend'::TEXT       AS metric_name,
                spend_now  AS value_now, spend_then  AS value_then
@@ -98,6 +139,14 @@ BEGIN
 
         UNION ALL
 
+        -- clicks — excluded when 0 in both periods (no signal)
+        SELECT campaign_name, 'clicks'::TEXT      AS metric_name,
+               clicks_now::NUMERIC AS value_now, clicks_then::NUMERIC AS value_then
+        FROM combined
+        WHERE clicks_now > 0 OR clicks_then > 0
+
+        UNION ALL
+
         -- cpa = spend / conversions (NULL when conversions = 0 in either period)
         SELECT
             campaign_name,
@@ -105,11 +154,32 @@ BEGIN
             CASE WHEN conv_now  > 0 THEN ROUND(spend_now  / conv_now,  2) ELSE NULL END AS value_now,
             CASE WHEN conv_then > 0 THEN ROUND(spend_then / conv_then, 2) ELSE NULL END AS value_then
         FROM combined
+
+        UNION ALL
+
+        -- cpc = spend / clicks (NULL when clicks = 0 in either period)
+        SELECT
+            campaign_name,
+            'cpc'::TEXT AS metric_name,
+            CASE WHEN clicks_now  > 0 THEN ROUND(spend_now  / clicks_now,  2) ELSE NULL END AS value_now,
+            CASE WHEN clicks_then > 0 THEN ROUND(spend_then / clicks_then, 2) ELSE NULL END AS value_then
+        FROM combined
+
+        UNION ALL
+
+        -- ctr expressed as percentage (ctr_now is already × 100)
+        -- NULL rows (no impressions) are filtered by the WHERE clause in deltas
+        SELECT
+            campaign_name,
+            'ctr'::TEXT AS metric_name,
+            ctr_now  AS value_now,
+            ctr_then AS value_then
+        FROM combined
     ),
 
     deltas AS (
-        -- Calculate delta; rows where value_then = 0 produce NULL delta
-        -- (infinite growth / new campaign) and are excluded downstream.
+        -- Calculate delta; rows where value_then = 0 produce NULL delta and
+        -- are excluded downstream by the ABS(delta) > 15 filter.
         SELECT
             ml.campaign_name,
             ml.metric_name,
