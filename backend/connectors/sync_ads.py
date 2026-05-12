@@ -49,7 +49,9 @@ def sync_campaigns(
             c.campaign_name                              AS name,
             SUM(s.metrics_cost_micros) / 1000000         AS cost,
             SUM(s.metrics_conversions)                   AS conv,
-            SUM(s.metrics_conversions_value)             AS conv_value
+            SUM(s.metrics_conversions_value)             AS conv_value,
+            SUM(s.metrics_clicks)                        AS clicks,
+            SUM(s.metrics_impressions)                   AS impressions
         FROM `{GCP_PROJECT_ID}.{GOOGLE_ADS_DATASET}.{STATS_TABLE}` s
         JOIN (
             SELECT DISTINCT campaign_id, campaign_name
@@ -75,9 +77,12 @@ def sync_campaigns(
     now = datetime.now(timezone.utc).isoformat()
     records = []
     for row in results:
-        cost       = float(row.cost)       if row.cost       else 0.0
-        conv_value = float(row.conv_value) if row.conv_value else 0.0
-        roas       = round(conv_value / cost, 2) if cost > 0 else 0.0
+        cost        = float(row.cost)       if row.cost       else 0.0
+        conv_value  = float(row.conv_value) if row.conv_value else 0.0
+        roas        = round(conv_value / cost, 2) if cost > 0 else 0.0
+        clicks      = int(row.clicks)       if row.clicks      else 0
+        impressions = int(row.impressions)  if row.impressions else 0
+        ctr         = round(clicks / impressions, 6) if impressions > 0 else 0.0
         records.append({
             "workspace_id":     WOKE_WORKSPACE_ID,
             "campaign_id":      str(row.campaign_id),
@@ -85,6 +90,9 @@ def sync_campaigns(
             "cost":             round(cost, 2),
             "conversions":      float(row.conv) if row.conv else 0.0,
             "roas":             roas,
+            "clicks":           clicks,
+            "impressions":      impressions,
+            "ctr":              ctr,
             "data_source":      "google_ads",
             "source_platform":  "google_ads",
             "is_mock":          False,
@@ -95,6 +103,14 @@ def sync_campaigns(
 
     if dry_run:
         print(f"[sync_campaigns] --dry-run: would upsert {len(records)} records", flush=True)
+        for r in records[:5]:
+            ctr_pct = round(r["ctr"] * 100, 2)
+            print(
+                f"  {r['campaign_name']}: "
+                f"Clicks: {r['clicks']}, Impressions: {r['impressions']}, "
+                f"CTR: {ctr_pct}%, Cost: R${r['cost']}",
+                flush=True,
+            )
         return len(records)
 
     supabase.table("campaign_summary").upsert(

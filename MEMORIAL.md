@@ -2218,6 +2218,75 @@ Camada de inteligência que traduz os deltas numéricos da v1.9.1 em narrativas 
 - SDK `google.generativeai` (legado) está deprecated; migração para `google.genai` já aplicada.
 - `temperature=0.2` garante output consistente e factual; subir para 0.4 se narrativas soarem repetitivas.
 
+### v1.8.1/4 — Saneamento de Base: Schema & Snapshot Engine ✅ CONCLUÍDA
+
+**Data de conclusão:** 2026-05-12
+
+Saneamento de débito técnico de infraestrutura executado entre v1.9.2 e v1.9.3. Expande o schema e o motor de snapshot para suportar o funil completo (Clicks/CTR/CPC).
+
+#### O que foi entregue
+
+- Migration `012_campaign_summary_expand_metrics` aplicada ao Supabase (`lasocsneburvtxqgqhie`):
+  - `clicks INTEGER DEFAULT 0`
+  - `impressions INTEGER DEFAULT 0`
+  - `ctr NUMERIC(8,6) DEFAULT 0` — fração (0.0123 = 1.23%); não-aditiva, sempre recomputar de clicks/impressions
+  - `ad_quality_score NUMERIC(4,2)` — nullable; não disponível em PMax/Display
+  - Índice parcial `idx_campaign_summary_clicks_nonzero` para queries de eficiência de cliques
+- Função `fn_campaign_snapshot_delta` atualizada para v1.9.1-REV (6 métricas):
+  - **Novas:** `clicks`, `cpc` (spend/clicks), `ctr` (recomputado de clicks_agg/impressions_agg × 100)
+  - CTR recomputado dos agregados — nunca somado da coluna armazenada (não-aditivo)
+  - `NULLIF` em todos os denominadores; rows sem baseline excluídas automaticamente
+- Evento registrado em `operational_events`: `id: 30904cf5`, `event_type: operational`, `category: infrastructure`
+
+#### Arquivos
+
+| Arquivo | Tipo | Descrição |
+|---|---|---|
+| `supabase/migrations/012_campaign_summary_expand_metrics.sql` | Migration aplicada | Schema expansion campaign_summary |
+| `docs/sql/fn_campaign_snapshot_delta.sql` | Função SQL (rascunho atualizado) | Snapshot Engine v1.9.1-REV |
+
+#### Observações técnicas registradas
+
+- `ad_quality_score` é métrica de keyword level no BigQuery Ads export padrão — não ingerida no pipeline de campanha. Campo existe no schema para uso futuro via query dedicada.
+- `operational_events` já existia com schema mais rico (migrations 010 + 011) — nenhuma migration duplicada criada.
+- Naming discrepancy documentada: spec referia `get_performance_snapshot`; nome real implantado é `fn_campaign_snapshot_delta`.
+
+---
+
+### v1.8.5 — Data Pipeline Update: Clicks & Impressions Sync ✅ CONCLUÍDA
+
+**Data de conclusão:** 2026-05-12
+
+Atualização do pipeline de ingestão para popular as colunas `clicks`, `impressions` e `ctr` no `campaign_summary` com dados reais do BigQuery.
+
+#### O que foi entregue
+
+- `backend/connectors/sync_ads.py` — função `sync_campaigns()` atualizada:
+  - BigQuery QUERY: + `SUM(s.metrics_clicks) AS clicks`, `SUM(s.metrics_impressions) AS impressions`
+  - Record builder: cast explícito `int(row.clicks)`, `int(row.impressions)`; CTR derivado com guard `impressions > 0`
+  - Dry-run logging: imprime os 5 primeiros registros com clicks, impressions, CTR e cost para evidência
+- Pipeline executado em modo produção — **9 campanhas com dados reais persistidos**
+
+#### Prova de persistência (validação no banco)
+
+```sql
+SELECT COUNT(*), SUM(clicks), SUM(impressions), ROUND(AVG(ctr*100)::NUMERIC,2) AS avg_ctr_pct
+FROM campaign_summary WHERE clicks > 0;
+-- Resultado: 9 linhas | 2.877 clicks | 70.641 impressões | CTR médio 4,80%
+```
+
+#### Arquivos
+
+| Arquivo | Tipo | Descrição |
+|---|---|---|
+| `backend/connectors/sync_ads.py` | Módulo Python | Pipeline de ingestão — sync_campaigns() atualizado |
+
+#### Observações técnicas registradas
+
+- `GROUP BY` não alterado — `metrics_clicks` e `metrics_impressions` são `SUM()`, sem impacto no agrupamento.
+- `ad_quality_score` omitido do record builder — não disponível via `p_ads_CampaignStats_*`. Banco aceita `NULL` por design.
+- Sync executado sobre o range `2026-04-13..2026-05-12` (30 dias) — dado histórico populado retroativamente.
+
 ---
 
 ## Próximos Passos — v1.9: Explainable AI / Insight Diffs
