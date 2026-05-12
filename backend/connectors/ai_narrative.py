@@ -1,7 +1,7 @@
 """
-ai_narrative.py — SynapseIQ v1.9.2
+ai_narrative.py — SynapseIQ v1.9.6
 Translates campaign snapshot deltas (fn_campaign_snapshot_delta output)
-into AI-generated diagnostic narratives using Google Gemini 1.5.
+into AI-generated diagnostic narratives using Google Gemini 2.5.
 
 Input  : list[dict] rows from fn_campaign_snapshot_delta()
          Each row: campaign_name, metric_name, value_now, value_then,
@@ -25,7 +25,7 @@ if _HERE not in sys.path:
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 
-GEMINI_MODEL   = "gemini-1.5-flash"
+GEMINI_MODEL   = "gemini-2.5-flash"
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 # Required fields in every valid Gemini response.
@@ -144,7 +144,7 @@ def generate_narrative(
     is_simulated: bool = False,
 ) -> dict[str, Any]:
     """
-    Call Gemini 1.5 with snapshot delta rows and return a structured diagnostic.
+    Call Gemini 2.5 with snapshot delta rows and return a structured diagnostic.
 
     Args:
         snapshot_rows : output of fn_campaign_snapshot_delta() (may be empty list)
@@ -174,7 +174,7 @@ def generate_narrative(
         system_instruction=SYSTEM_PROMPT,
         response_mime_type="application/json",
         temperature=0.2,
-        max_output_tokens=512,
+        max_output_tokens=2048,
     )
 
     user_message = _build_user_message(snapshot_rows, workspace_name)
@@ -205,6 +205,11 @@ def generate_narrative(
     score = parsed.get("priority_score")
     if not isinstance(score, int) or score not in range(1, 6):
         raise ValueError(f"priority_score must be an integer 1–5, got: {score!r}")
+
+    summary = parsed["insight_summary"]
+    if len(summary) > 100:
+        cut = summary.rfind(" ", 0, 97)
+        parsed["insight_summary"] = (summary[:cut] + "...") if cut > 0 else summary[:97] + "..."
 
     if is_simulated:
         parsed["insight_summary"] = "[PREVIEW DE TESTE] " + parsed["insight_summary"]
