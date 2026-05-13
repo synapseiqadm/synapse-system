@@ -8,7 +8,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
-from config import WOKE_WORKSPACE_ID
+from config import WORKSPACE_ID
 
 
 # Existing get_operational_timeline function

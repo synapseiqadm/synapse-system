@@ -11,7 +11,7 @@ if _HERE not in sys.path:
 
 from config import (
     GCP_PROJECT_ID,
-    WOKE_WORKSPACE_ID,
+    WORKSPACE_ID,
     GA4_DATASET,
     DATE_RANGE_START,
     DATE_RANGE_END,
@@ -211,7 +211,7 @@ def sync_ga4_first_light(
 
     now = datetime.now(timezone.utc).isoformat()
     record = {
-        "workspace_id":       WOKE_WORKSPACE_ID,
+        "workspace_id":       WORKSPACE_ID,
         "ga4_dataset":        GA4_DATASET,
         "latest_event_table": summary["latest_event_table"],
         "latest_event_date":  summary["latest_event_date"],

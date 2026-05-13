@@ -1,0 +1,36 @@
+tenant:
+  workspace_id: "b7126974-4b12-468a-bea6-7852fae62a00"
+  name: "Cacau Turismo"
+  slug: "cacau"
+
+sources:
+  ga4_dataset: ""                       # preencher quando GA4 BigQuery export estiver activo
+  google_ads_dataset: "raw_google_ads_cacau"
+  google_ads_customer_id: "7184417498"
+
+domains:
+  production:
+    - "cacauturismo.com.br"
+    - "www.cacauturismo.com.br"
+  staging: []
+  local:
+    - "localhost"
+
+conversion_registry:
+  canonical_events: {}
+  intermediate_events: {}
+  intent_events: {}
+  ads_only_conversion_actions: {}
+
+suspicious_events: []
+
+attribution:
+  required_paid_url_params:
+    - "gclid"
+    - "utm_source"
+    - "utm_medium"
+    - "utm_campaign"
+
+semantic_checks:
+  enabled: true
+  minimum_overlap_days_for_ads_ga4_validation: 3

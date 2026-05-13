@@ -9,7 +9,7 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 from config import (
-    WOKE_WORKSPACE_ID,
+    WORKSPACE_ID,
     DATE_RANGE_START,
     DATE_RANGE_END,
     GCP_PROJECT_ID,
@@ -232,7 +232,7 @@ def _result(
     details: Optional[dict] = None,
 ) -> dict:
     return {
-        "workspace_id":     WOKE_WORKSPACE_ID,
+        "workspace_id":     WORKSPACE_ID,
         "check_name":       check_name,
         "check_category":   "semantic_governance",
         "status":           status,
@@ -263,7 +263,7 @@ def _insight(
 ) -> dict:
     now = datetime.now(timezone.utc).isoformat()
     return {
-        "workspace_id":     WOKE_WORKSPACE_ID,
+        "workspace_id":     WORKSPACE_ID,
         "insight_type":     insight_type,
         "severity":         severity,
         "status":           "new",
@@ -299,7 +299,7 @@ def start_governance_run(
         resp = (
             supabase.table("semantic_governance_runs")
             .insert({
-                "workspace_id":     WOKE_WORKSPACE_ID,
+                "workspace_id":     WORKSPACE_ID,
                 "tenant_slug":      tenant.get("slug", "unknown"),
                 "date_range_start": str(DATE_RANGE_START),
                 "date_range_end":   str(DATE_RANGE_END),
@@ -401,7 +401,7 @@ def write_governance_findings(
     for r in results:
         finding_row = {
             "run_id":           run_id,
-            "workspace_id":     WOKE_WORKSPACE_ID,
+            "workspace_id":     WORKSPACE_ID,
             "check_name":       r["check_name"],
             "status":           r["status"],
             "severity":         r["severity"],

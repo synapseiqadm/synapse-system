@@ -18,7 +18,7 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 from config import (
-    APP_ENV, WOKE_WORKSPACE_ID,
+    APP_ENV, WORKSPACE_ID,
     GCP_PROJECT_ID, BQ_LOCATION, GA4_DATASET,
     SUPABASE_URL, SUPABASE_SERVICE_KEY,
     DATE_RANGE_START, DATE_RANGE_END,
@@ -61,7 +61,7 @@ def main(dry_run: bool = False) -> None:
     if not dry_run:
         run_id = start_sync_run(
             supabase,
-            workspace_id     = WOKE_WORKSPACE_ID,
+            workspace_id     = WORKSPACE_ID,
             source_platform  = "google_ads",
             data_source      = "campaign_summary",
             is_mock          = False,
@@ -103,7 +103,7 @@ def main(dry_run: bool = False) -> None:
     if not dry_run:
         ag_run_id = start_sync_run(
             supabase,
-            workspace_id     = WOKE_WORKSPACE_ID,
+            workspace_id     = WORKSPACE_ID,
             source_platform  = "google_ads",
             data_source      = "ad_group_summary",
             is_mock          = False,
@@ -145,7 +145,7 @@ def main(dry_run: bool = False) -> None:
     if not dry_run:
         kpi_run_id = start_sync_run(
             supabase,
-            workspace_id     = WOKE_WORKSPACE_ID,
+            workspace_id     = WORKSPACE_ID,
             source_platform  = "google_ads",
             data_source      = "kpi_cache_daily",
             is_mock          = False,
@@ -190,7 +190,7 @@ def main(dry_run: bool = False) -> None:
     if not dry_run:
         kw_run_id = start_sync_run(
             supabase,
-            workspace_id     = WOKE_WORKSPACE_ID,
+            workspace_id     = WORKSPACE_ID,
             source_platform  = "google_ads",
             data_source      = "keyword_analysis",
             is_mock          = False,
@@ -342,7 +342,7 @@ def main(dry_run: bool = False) -> None:
         camp_res = (
             supabase.table("campaign_summary")
             .select("campaign_name,roas,cost,conversions")
-            .eq("workspace_id", WOKE_WORKSPACE_ID)
+            .eq("workspace_id", WORKSPACE_ID)
             .order("date_range_end", desc=True)
             .execute()
         )
@@ -355,12 +355,12 @@ def main(dry_run: bool = False) -> None:
                 seen.add(nm)
                 campaign_rows.append(r)
 
-        snap_res = supabase.rpc("fn_campaign_snapshot_delta", {"target_workspace_id": WOKE_WORKSPACE_ID}).execute()
+        snap_res = supabase.rpc("fn_campaign_snapshot_delta", {"target_workspace_id": WORKSPACE_ID}).execute()
         snapshot_rows: list[dict] = snap_res.data or []
 
         generate_agent_decisions(
             supabase,
-            workspace_id  = WOKE_WORKSPACE_ID,
+            workspace_id  = WORKSPACE_ID,
             campaign_rows = campaign_rows,
             snapshot_rows = snapshot_rows,
             dry_run       = dry_run,

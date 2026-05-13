@@ -61,7 +61,7 @@ jobs:
           PYTHONIOENCODING:               "utf-8"
           APP_ENV:                        "production"
           ALLOW_MOCK_DATA:                "false"
-          WOKE_WORKSPACE_ID:              "a082fe86-a65f-4c9b-9442-fe775f47e3fc"
+          WORKSPACE_ID:                   "a082fe86-a65f-4c9b-9442-fe775f47e3fc"
           GCP_PROJECT_ID:                 "synapsesystem"
           BQ_LOCATION:                    "southamerica-east1"
           GOOGLE_ADS_DATASET:             "raw_google_ads_woke"

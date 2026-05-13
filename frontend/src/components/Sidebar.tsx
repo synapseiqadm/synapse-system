@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
   LayoutDashboard,
@@ -8,8 +8,10 @@ import {
   ScrollText,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   Zap,
   Settings,
+  Check,
 } from "lucide-react";
 
 const NAV = [
@@ -19,14 +21,63 @@ const NAV = [
   { id: "logs",       icon: ScrollText,      label: "Status do Sync",    href: "/logs" },
 ];
 
+interface Workspace {
+  id:   string;
+  name: string;
+  slug: string;
+}
+
 interface SidebarProps {
   active: string;
   onNavigate: (id: string) => void;
 }
 
 export function Sidebar({ active, onNavigate }: SidebarProps) {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed]           = useState(false);
+  const [workspaces, setWorkspaces]         = useState<Workspace[]>([]);
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>("");
+  const [dropdownOpen, setDropdownOpen]     = useState(false);
+  const [switching, setSwitching]           = useState(false);
   const router = useRouter();
+
+  // Fetch workspace list — only returns data for superadmin
+  const loadWorkspaces = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/workspaces");
+      if (!res.ok) return; // non-superadmin gets 403 → silently ignore
+      const json = await res.json() as { ok: boolean; workspaces?: Workspace[] };
+      if (json.ok && json.workspaces) {
+        setWorkspaces(json.workspaces);
+        // Read active workspace from cookie (set by /api/workspaces/switch)
+        const match = document.cookie.match(/synapseiq_workspace=([^;]+)/);
+        setActiveWorkspaceId(match ? match[1] : (json.workspaces[0]?.id ?? ""));
+      }
+    } catch {
+      // network error — no dropdown
+    }
+  }, []);
+
+  useEffect(() => { void loadWorkspaces(); }, [loadWorkspaces]);
+
+  const handleSwitch = async (ws: Workspace) => {
+    if (ws.id === activeWorkspaceId || switching) return;
+    setSwitching(true);
+    setDropdownOpen(false);
+    try {
+      await fetch("/api/workspaces/switch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspace_id: ws.id }),
+      });
+      setActiveWorkspaceId(ws.id);
+      router.refresh();
+    } finally {
+      setSwitching(false);
+    }
+  };
+
+  const activeWorkspace = workspaces.find(w => w.id === activeWorkspaceId);
+  const isSuperadmin    = workspaces.length > 0;
 
   return (
     <aside
@@ -50,6 +101,37 @@ export function Sidebar({ active, onNavigate }: SidebarProps) {
           </div>
         )}
       </div>
+
+      {/* Workspace Switcher — superadmin only */}
+      {isSuperadmin && !collapsed && (
+        <div className="relative px-2 pt-2">
+          <button
+            onClick={() => setDropdownOpen(o => !o)}
+            disabled={switching}
+            className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-[#0d1530] border border-[#2a3d6a] text-sm text-slate-300 hover:border-indigo-500/50 transition-colors"
+          >
+            <span className="truncate font-medium">
+              {switching ? "A trocar…" : (activeWorkspace?.name ?? "Workspace")}
+            </span>
+            <ChevronDown size={13} className={`flex-shrink-0 text-slate-500 transition-transform ${dropdownOpen ? "rotate-180" : ""}`} />
+          </button>
+
+          {dropdownOpen && (
+            <div className="absolute left-2 right-2 top-full mt-1 z-50 rounded-lg border border-[#2a3d6a] bg-[#0d1530] shadow-xl overflow-hidden">
+              {workspaces.map(ws => (
+                <button
+                  key={ws.id}
+                  onClick={() => void handleSwitch(ws)}
+                  className="w-full flex items-center justify-between gap-2 px-3 py-2 text-sm text-slate-300 hover:bg-indigo-600/20 hover:text-indigo-300 transition-colors text-left"
+                >
+                  <span className="truncate">{ws.name}</span>
+                  {ws.id === activeWorkspaceId && <Check size={13} className="flex-shrink-0 text-indigo-400" />}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Nav */}
       <nav className="flex-1 p-2 space-y-0.5 mt-1">
@@ -94,10 +176,12 @@ export function Sidebar({ active, onNavigate }: SidebarProps) {
         {!collapsed && (
           <div className="flex items-center gap-2.5 px-3 py-2">
             <div className="w-7 h-7 rounded-full bg-gradient-to-br from-violet-500 to-indigo-500 flex items-center justify-center text-xs text-white font-bold flex-shrink-0">
-              A
+              {isSuperadmin ? "S" : "A"}
             </div>
             <div className="min-w-0">
-              <p className="text-xs text-slate-300 font-medium truncate">Admin</p>
+              <p className="text-xs text-slate-300 font-medium truncate">
+                {isSuperadmin ? "Super Admin" : "Admin"}
+              </p>
               <p className="text-[10px] text-slate-600 truncate">synapseiq.io</p>
             </div>
           </div>

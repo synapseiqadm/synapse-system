@@ -1,0 +1,36 @@
+tenant:
+  workspace_id: "63fd5033-2705-41a5-a3a3-95de623d9da7"
+  name: "Pigz"
+  slug: "pigz"
+
+sources:
+  ga4_dataset: ""                     # preencher quando GA4 for configurado
+  google_ads_dataset: "raw_google_ads_pigz"
+  google_ads_customer_id: "8378967509"  # substituir pelo ID real
+
+domains:
+  production:
+    - "parceiros.pigz.com.br"
+    - "pigz.com.br"
+  staging: []
+  local:
+    - "localhost"
+
+conversion_registry:
+  canonical_events: {}
+  intermediate_events: {}
+  intent_events: {}
+  ads_only_conversion_actions: {}
+
+suspicious_events: []
+
+attribution:
+  required_paid_url_params:
+    - "gclid"
+    - "utm_source"
+    - "utm_medium"
+    - "utm_campaign"
+
+semantic_checks:
+  enabled: true
+  minimum_overlap_days_for_ads_ga4_validation: 3

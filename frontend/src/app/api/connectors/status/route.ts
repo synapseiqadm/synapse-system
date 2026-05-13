@@ -1,30 +1,9 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/utils/supabase/server";
-import { DEFAULT_WORKSPACE } from "@/lib/workspace";
+import { resolveWorkspace } from "@/lib/resolve-workspace";
 
 export const dynamic   = "force-dynamic";
 export const revalidate = 0;
-
-async function resolveWorkspace(supabase: Awaited<ReturnType<typeof createClient>>) {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("workspace_id")
-    .eq("id", user.id)
-    .single();
-  if (!profile?.workspace_id) return null;
-  const { data: ws } = await supabase
-    .from("workspaces")
-    .select("name, slug")
-    .eq("id", profile.workspace_id)
-    .single();
-  return {
-    id:   profile.workspace_id as string,
-    name: (ws?.name as string) ?? DEFAULT_WORKSPACE.name,
-    slug: (ws?.slug as string) ?? DEFAULT_WORKSPACE.slug,
-  };
-}
 
 // Checks that affect reliability of all performance diagnosis
 const TRACKING_CHECKS = new Set([

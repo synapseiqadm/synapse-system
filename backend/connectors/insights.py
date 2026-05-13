@@ -10,7 +10,7 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 from config import (
-    WOKE_WORKSPACE_ID,
+    WORKSPACE_ID,
     DATE_RANGE_START,
     DATE_RANGE_END,
     GA4_DATASET,
@@ -46,7 +46,7 @@ def _insight(
 ) -> dict:
     now = datetime.now(timezone.utc).isoformat()
     return {
-        "workspace_id":     WOKE_WORKSPACE_ID,
+        "workspace_id":     WORKSPACE_ID,
         "insight_type":     insight_type,
         "severity":         severity,
         "status":           "new",
@@ -73,7 +73,7 @@ def get_previous_insight_state(supabase: Client, dedupe_key: str) -> dict | None
     resp = (
         supabase.table("insight_feed")
         .select("evidence,severity,status,created_at")
-        .eq("workspace_id", WOKE_WORKSPACE_ID)
+        .eq("workspace_id", WORKSPACE_ID)
         .eq("dedupe_key", dedupe_key)
         .order("created_at", desc=True)
         .limit(1)
@@ -90,7 +90,7 @@ def get_latest_data_quality_state(supabase: Client) -> dict:
     resp = (
         supabase.table("data_quality_report")
         .select("check_name,status,severity,checked_at")
-        .eq("workspace_id", WOKE_WORKSPACE_ID)
+        .eq("workspace_id", WORKSPACE_ID)
         .order("checked_at", desc=True)
         .limit(100)
         .execute()
@@ -138,7 +138,7 @@ def generate_campaign_zero_conversion_insights(
     resp = (
         supabase.table("campaign_summary")
         .select("campaign_id,campaign_name,cost,conversions,roas")
-        .eq("workspace_id", WOKE_WORKSPACE_ID)
+        .eq("workspace_id", WORKSPACE_ID)
         .gte("date_range_start", str(DATE_RANGE_START))
         .lte("date_range_end",   str(DATE_RANGE_END))
         .gte("cost", INSIGHT_MIN_CAMPAIGN_COST)
@@ -188,7 +188,7 @@ def generate_keyword_zero_conversion_insights(
     resp = (
         supabase.table("keyword_analysis")
         .select("campaign_id,campaign_name,keyword,match_type,cost,conversions")
-        .eq("workspace_id", WOKE_WORKSPACE_ID)
+        .eq("workspace_id", WORKSPACE_ID)
         .gte("date_range_start", str(DATE_RANGE_START))
         .lte("date_range_end",   str(DATE_RANGE_END))
         .gte("cost", INSIGHT_MIN_KEYWORD_COST)
@@ -284,7 +284,7 @@ def resolve_obsolete_insights(
     resp = (
         supabase.table("insight_feed")
         .select("id,dedupe_key,date_range_start,date_range_end")
-        .eq("workspace_id", WOKE_WORKSPACE_ID)
+        .eq("workspace_id", WORKSPACE_ID)
         .eq("insight_type", insight_type)
         .eq("status", "new")
         .execute()
@@ -424,7 +424,7 @@ def generate_insights(
     data_quality_blocker insight instead of raising.
     """
     print(
-        f"[insights] running deterministic insights for workspace={WOKE_WORKSPACE_ID} "
+        f"[insights] running deterministic insights for workspace={WORKSPACE_ID} "
         f"period={DATE_RANGE_START}..{DATE_RANGE_END}",
         flush=True,
     )
@@ -548,7 +548,7 @@ def write_insights(supabase: Client, insights: list) -> None:
     existing_resp = (
         supabase.table("insight_feed")
         .select("dedupe_key,status")
-        .eq("workspace_id", WOKE_WORKSPACE_ID)
+        .eq("workspace_id", WORKSPACE_ID)
         .eq("date_range_start", str(DATE_RANGE_START))
         .eq("date_range_end", str(DATE_RANGE_END))
         .in_("dedupe_key", dedupe_keys)

@@ -1,0 +1,73 @@
+name: Sync BigQuery → Supabase (Pigz)
+
+on:
+  schedule:
+    - cron: "30 9 * * *"  # 06:30 BRT — 30 min after Woke run
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run — validate pipeline without writing to Supabase"
+        type: boolean
+        default: true
+
+concurrency:
+  group: a-data-sync-pigz
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  sync:
+    name: Run a_data_sync.py (Pigz)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install Python dependencies
+        run: pip install -r backend/requirements.txt
+
+      - name: Write Google service account credentials
+        env:
+          GOOGLE_CREDS_B64: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+        run: echo "$GOOGLE_CREDS_B64" | base64 --decode > /tmp/gcp_credentials.json
+
+      - name: Run data sync (Pigz)
+        env:
+          SUPABASE_URL:                   ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY:           ${{ secrets.SUPABASE_SERVICE_KEY }}
+          GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp_credentials.json
+          PYTHONIOENCODING:               "utf-8"
+          APP_ENV:                        "production"
+          ALLOW_MOCK_DATA:                "false"
+          WORKSPACE_ID:                   "63fd5033-2705-41a5-a3a3-95de623d9da7"
+          GCP_PROJECT_ID:                 "synapsesystem"
+          BQ_LOCATION:                    "southamerica-east1"
+          # TODO: substituir pelo Customer ID real do Google Ads da Pigz
+          GOOGLE_ADS_CUSTOMER_ID:         "8378967509"
+          GOOGLE_ADS_DATASET:             "raw_google_ads_pigz"
+          GA4_DATASET:                    ""
+          DATE_RANGE_DAYS:                "30"
+          ENABLE_INSIGHTS:                "true"
+          MEASUREMENT_CONFIG_PATH:        "governance/tenants/pigz_measurement_config.yml"
+        run: |
+          cd backend
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            python -m connectors.a_data_sync --dry-run
+          else
+            python -m connectors.a_data_sync
+          fi
+
+      - name: Remove credentials file
+        if: always()
+        run: rm -f /tmp/gcp_credentials.json

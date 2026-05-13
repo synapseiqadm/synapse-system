@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 # This avoids touching real env vars and prevents the module-level date
 # assignments (_DATE_START_SUFFIX, _DATE_END_SUFFIX) from failing.
 _mock_config = types.ModuleType("config")
-_mock_config.WOKE_WORKSPACE_ID       = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+_mock_config.WORKSPACE_ID       = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 _mock_config.DATE_RANGE_START        = date(2025, 1, 1)
 _mock_config.DATE_RANGE_END          = date(2025, 1, 31)
 _mock_config.GCP_PROJECT_ID          = "test-project"

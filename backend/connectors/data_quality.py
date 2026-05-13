@@ -8,7 +8,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
-from config import APP_ENV, WOKE_WORKSPACE_ID, DATE_RANGE_START, DATE_RANGE_END
+from config import APP_ENV, WORKSPACE_ID, DATE_RANGE_START, DATE_RANGE_END
 from sync_ga4 import GA4_CONVERSION_EVENTS
 
 
@@ -27,7 +27,7 @@ def _result(
     source_platform: str = "google_ads",
 ) -> dict:
     return {
-        "workspace_id":     WOKE_WORKSPACE_ID,
+        "workspace_id":     WORKSPACE_ID,
         "check_name":       check_name,
         "check_category":   check_category,
         "status":           status,
@@ -57,7 +57,7 @@ def check_campaigns_missing_campaign_id(supabase: Client) -> dict:
     null_resp = (
         supabase.table("campaign_summary")
         .select("id", count="exact")
-        .eq("workspace_id", WOKE_WORKSPACE_ID)
+        .eq("workspace_id", WORKSPACE_ID)
         .gte("date_range_start", str(DATE_RANGE_START))
         .lte("date_range_end", str(DATE_RANGE_END))
         .is_("campaign_id", "null")
@@ -66,7 +66,7 @@ def check_campaigns_missing_campaign_id(supabase: Client) -> dict:
     empty_resp = (
         supabase.table("campaign_summary")
         .select("id", count="exact")
-        .eq("workspace_id", WOKE_WORKSPACE_ID)
+        .eq("workspace_id", WORKSPACE_ID)
         .gte("date_range_start", str(DATE_RANGE_START))
         .lte("date_range_end", str(DATE_RANGE_END))
         .eq("campaign_id", "")
@@ -90,7 +90,7 @@ def check_campaigns_zero_conversions_with_cost(supabase: Client) -> dict:
     resp = (
         supabase.table("campaign_summary")
         .select("campaign_id,campaign_name,cost,conversions")
-        .eq("workspace_id", WOKE_WORKSPACE_ID)
+        .eq("workspace_id", WORKSPACE_ID)
         .gte("date_range_start", str(DATE_RANGE_START))
         .lte("date_range_end", str(DATE_RANGE_END))
         .gt("cost", 0)
@@ -118,7 +118,7 @@ def check_keywords_zero_conversions_with_cost(supabase: Client) -> dict:
     count_resp = (
         supabase.table("keyword_analysis")
         .select("id", count="exact")
-        .eq("workspace_id", WOKE_WORKSPACE_ID)
+        .eq("workspace_id", WORKSPACE_ID)
         .gte("date_range_start", str(DATE_RANGE_START))
         .lte("date_range_end", str(DATE_RANGE_END))
         .gt("cost", 0)
@@ -130,7 +130,7 @@ def check_keywords_zero_conversions_with_cost(supabase: Client) -> dict:
     examples_resp = (
         supabase.table("keyword_analysis")
         .select("campaign_name,keyword,match_type,cost,conversions")
-        .eq("workspace_id", WOKE_WORKSPACE_ID)
+        .eq("workspace_id", WORKSPACE_ID)
         .gte("date_range_start", str(DATE_RANGE_START))
         .lte("date_range_end", str(DATE_RANGE_END))
         .gt("cost", 0)
@@ -159,7 +159,7 @@ def _freshness_check(supabase: Client, table: str, check_name: str) -> dict:
     resp = (
         supabase.table(table)
         .select("loaded_at")
-        .eq("workspace_id", WOKE_WORKSPACE_ID)
+        .eq("workspace_id", WORKSPACE_ID)
         .not_.is_("loaded_at", "null")
         .order("loaded_at", desc=True)
         .limit(1)
@@ -218,14 +218,14 @@ def check_mock_data_presence(supabase: Client) -> dict:
     camp_resp = (
         supabase.table("campaign_summary")
         .select("id", count="exact")
-        .eq("workspace_id", WOKE_WORKSPACE_ID)
+        .eq("workspace_id", WORKSPACE_ID)
         .eq("is_mock", True)
         .execute()
     )
     kw_resp = (
         supabase.table("keyword_analysis")
         .select("id", count="exact")
-        .eq("workspace_id", WOKE_WORKSPACE_ID)
+        .eq("workspace_id", WORKSPACE_ID)
         .eq("is_mock", True)
         .execute()
     )
@@ -416,7 +416,7 @@ def run_data_quality_checks(
     duplicate BigQuery round-trips.
     """
     print(
-        f"[data_quality] running checks for workspace={WOKE_WORKSPACE_ID} "
+        f"[data_quality] running checks for workspace={WORKSPACE_ID} "
         f"period={DATE_RANGE_START}..{DATE_RANGE_END}",
         flush=True,
     )

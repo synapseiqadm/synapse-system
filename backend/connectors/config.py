@@ -46,7 +46,9 @@ def required_env(name: str) -> str:
 APP_ENV          = os.getenv("APP_ENV", "production")
 ALLOW_MOCK_DATA  = os.getenv("ALLOW_MOCK_DATA", "false").lower() == "true"
 
-WOKE_WORKSPACE_ID      = os.getenv("WOKE_WORKSPACE_ID",      "a082fe86-a65f-4c9b-9442-fe775f47e3fc")
+# WORKSPACE_ID: active tenant for this pipeline run.
+# CI injects WORKSPACE_ID per workflow. WOKE_WORKSPACE_ID kept as fallback for local .env compatibility.
+WORKSPACE_ID = os.getenv("WORKSPACE_ID", os.getenv("WOKE_WORKSPACE_ID", "a082fe86-a65f-4c9b-9442-fe775f47e3fc"))
 GCP_PROJECT_ID         = os.getenv("GCP_PROJECT_ID",         "synapsesystem")
 BQ_LOCATION            = os.getenv("BQ_LOCATION",            "southamerica-east1")
 GOOGLE_ADS_DATASET     = os.getenv("GOOGLE_ADS_DATASET",     "raw_google_ads_woke")

@@ -8,7 +8,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
-from config import WOKE_WORKSPACE_ID, APP_ENV
+from config import WORKSPACE_ID, APP_ENV
 
 
 def record_operational_event(
@@ -26,7 +26,7 @@ def record_operational_event(
     Records an operational event in the 'operational_events' table.
     """
     event_data = {
-        "workspace_id": WOKE_WORKSPACE_ID,
+        "workspace_id": WORKSPACE_ID,
         "event_type": event_type,
         "category": category,
         "title": title,
@@ -67,7 +67,7 @@ def detect_kpi_anomaly(
         resp = (
             supabase.table("kpi_cache_daily")
             .select("date, metric_value")
-            .eq("workspace_id", WOKE_WORKSPACE_ID)
+            .eq("workspace_id", WORKSPACE_ID)
             .eq("metric_name", metric_name)
             .gte("date", date_start)
             .order("date", desc=False)

@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import time as _time
@@ -5,6 +6,7 @@ import urllib.error
 import urllib.request
 from datetime import date, datetime, timezone
 from google.cloud import bigquery
+from google.api_core.exceptions import BadRequest as BQBadRequest
 from supabase import Client
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -13,7 +15,7 @@ if _HERE not in sys.path:
 
 from config import (
     GCP_PROJECT_ID, GOOGLE_ADS_DATASET, GOOGLE_ADS_CUSTOMER_ID,
-    WOKE_WORKSPACE_ID, DATE_RANGE_START, DATE_RANGE_END,
+    WORKSPACE_ID, DATE_RANGE_START, DATE_RANGE_END,
 )
 
 
@@ -100,7 +102,7 @@ def sync_campaigns(
             daily_budget = None
         budget_total = round(daily_budget * period_days, 2) if daily_budget is not None else None
         records.append({
-            "workspace_id":     WOKE_WORKSPACE_ID,
+            "workspace_id":     WORKSPACE_ID,
             "campaign_id":      str(row.campaign_id),
             "campaign_name":    row.name,
             "cost":             round(cost, 2),
@@ -139,6 +141,25 @@ def sync_campaigns(
     return len(records)
 
 
+def _parse_final_url(raw: str | None) -> str | None:
+    """Normalise final_url regardless of BQ schema type.
+
+    REPEATED STRING schemas return a plain string after ARRAY_AGG.
+    STRING schemas may return a JSON-serialised array: '["https://..."]'.
+    Both cases are unwrapped to a bare URL string, or None if absent.
+    """
+    if not raw:
+        return None
+    raw = raw.strip()
+    if raw.startswith("["):
+        try:
+            parsed = json.loads(raw)
+            return parsed[0] if parsed else None
+        except (json.JSONDecodeError, IndexError):
+            return None
+    return raw or None
+
+
 def _probe_url(url: str) -> tuple[int | None, int | None]:
     """HEAD-request a URL. Returns (http_status_code, load_time_ms). Both None on network error."""
     try:
@@ -165,7 +186,8 @@ def sync_ad_groups(
     AD_TABLE       = f"p_ads_Ad_{GOOGLE_ADS_CUSTOMER_ID}"
     CAMPAIGN_TABLE = f"p_ads_Campaign_{GOOGLE_ADS_CUSTOMER_ID}"
 
-    QUERY = f"""
+    def _build_query(final_url_expr: str) -> str:
+        return f"""
         WITH strength_by_group AS (
             SELECT
                 ad_group_id,
@@ -180,7 +202,7 @@ def sync_ad_groups(
                 WHEN 2 THEN 'GOOD'
                 WHEN 3 THEN 'EXCELLENT'
                 ELSE 'UNSPECIFIED' END AS worst_strength,
-                ARRAY_AGG(ad_group_ad_ad_final_urls[SAFE_OFFSET(0)] IGNORE NULLS LIMIT 1)[SAFE_OFFSET(0)] AS final_url
+                {final_url_expr} AS final_url
             FROM `{GCP_PROJECT_ID}.{GOOGLE_ADS_DATASET}.{AD_TABLE}`
             WHERE ad_group_ad_status = 'ENABLED'
             GROUP BY ad_group_id
@@ -196,7 +218,7 @@ def sync_ad_groups(
             SUM(s.metrics_conversions)           AS conversions,
             SUM(s.metrics_conversions_value)     AS conv_value,
             str.worst_strength,
-            str.final_url
+            ANY_VALUE(str.final_url) AS final_url
         FROM `{GCP_PROJECT_ID}.{GOOGLE_ADS_DATASET}.{STATS_TABLE}` s
         JOIN (
             SELECT DISTINCT ad_group_id, ad_group_name
@@ -214,11 +236,23 @@ def sync_ad_groups(
             str.worst_strength
         HAVING SUM(s.metrics_cost_micros) / 1000000 > 0
         ORDER BY cost DESC
-    """
+        """
+
+    # Google Ads BQ exports final_urls as REPEATED STRING on some accounts and as
+    # plain STRING on others. Try REPEATED first; fall back to STRING on schema mismatch.
+    _EXPR_REPEATED = "ARRAY_AGG(ad_group_ad_ad_final_urls[SAFE_OFFSET(0)] IGNORE NULLS LIMIT 1)[SAFE_OFFSET(0)]"
+    _EXPR_STRING   = "NULLIF(TRIM(MAX(CAST(ad_group_ad_ad_final_urls AS STRING))), '')"
 
     print(f"[sync_ad_groups] source={STATS_TABLE} period={DATE_RANGE_START}..{DATE_RANGE_END}", flush=True)
 
-    results = list(bq_client.query(QUERY).result())
+    try:
+        results = list(bq_client.query(_build_query(_EXPR_REPEATED)).result())
+    except BQBadRequest as exc:
+        if "not supported on values of type STRING" in str(exc):
+            print("[sync_ad_groups] final_urls is STRING type — retrying with MAX()", flush=True)
+            results = list(bq_client.query(_build_query(_EXPR_STRING)).result())
+        else:
+            raise
     print(f"[sync_ad_groups] {len(results)} rows from BigQuery", flush=True)
 
     if not results:
@@ -247,7 +281,7 @@ def sync_ad_groups(
         roas        = round(conv_value / cost, 2) if cost > 0 else 0.0
         ctr         = round(clicks / impressions, 6) if impressions > 0 else 0.0
         records.append({
-            "workspace_id":     WOKE_WORKSPACE_ID,
+            "workspace_id":     WORKSPACE_ID,
             "ad_group_id":      str(row.ad_group_id),
             "ad_group_name":    row.ad_group_name,
             "campaign_id":      str(row.campaign_id),
@@ -259,7 +293,7 @@ def sync_ad_groups(
             "conversions":      conversions,
             "roas":             roas,
             "ad_strength":      row.worst_strength or "UNSPECIFIED",
-            "final_url":        row.final_url or None,
+            "final_url":        _parse_final_url(row.final_url),
             "http_status_code": None,
             "load_time_ms":     None,
             "date_range_start": str(DATE_RANGE_START),
@@ -356,7 +390,7 @@ def sync_keywords(
     for row in results:
         cost = float(row.cost) if row.cost else 0.0
         records.append({
-            "workspace_id":     WOKE_WORKSPACE_ID,
+            "workspace_id":     WORKSPACE_ID,
             "campaign_id":      str(row.campaign_id),
             "campaign_name":    row.campaign_name,
             "keyword":          row.keyword,
@@ -429,7 +463,7 @@ def sync_kpi_cache_daily(
             ("roas",        roas),
         ):
             records.append({
-                "workspace_id": WOKE_WORKSPACE_ID,
+                "workspace_id": WORKSPACE_ID,
                 "date":         date,
                 "metric_name":  metric_name,
                 "metric_value": metric_value,

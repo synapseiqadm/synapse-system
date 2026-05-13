@@ -1,24 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/utils/supabase/server";
-
-async function resolveWorkspace(supabase: Awaited<ReturnType<typeof createClient>>) {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
-
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("workspace_id")
-    .eq("id", user.id)
-    .single();
-  return profile?.workspace_id ? (profile.workspace_id as string) : null;
-}
+import { createAdminClient } from "@/utils/supabase/admin";
+import { resolveWorkspace } from "@/lib/resolve-workspace";
 
 export async function PATCH(req: NextRequest) {
   try {
     const supabase = await createClient();
 
-    const workspaceId = await resolveWorkspace(supabase);
-    if (!workspaceId) {
+    const workspace = await resolveWorkspace(supabase);
+    if (!workspace) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
 
@@ -32,11 +22,15 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "Invalid status" }, { status: 400 });
     }
 
-    const { error } = await supabase
+    // Superadmin may be acting on a workspace different from their profile default.
+    // Use admin client to bypass RLS for cross-workspace mutations.
+    const db = workspace.isSuperadmin ? createAdminClient() : supabase;
+
+    const { error } = await db
       .from("agent_decisions")
       .update({ status })
       .eq("id", dbId)
-      .eq("workspace_id", workspaceId);
+      .eq("workspace_id", workspace.id);
 
     if (error) {
       console.error("[agents/action] update error:", error);
