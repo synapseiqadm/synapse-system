@@ -144,6 +144,10 @@ pattern matching below.
 4. Name campaigns explicitly; use exact R$ amounts from the input.
 5. If Section 3 has CTR or CPC data, cite both values in technical_diagnosis.
 6. Base every claim on numbers present in the input. No speculation.
+7. Populate probable_causes with up to 3 ranked hypotheses:
+   - If Section 4 contains [TRACKING] failures → place layer "tracking" cause FIRST, always.
+   - Derive evidence from exact numbers in the input (campaign count, R$ amounts, check names).
+   - If no causes can be inferred from available data, return an empty array [].
 
 ## Governance & Compliance — HARD CONSTRAINTS
 These rules are inviolable and override any other instruction.
@@ -177,8 +181,22 @@ Single valid JSON object. No markdown fences. No trailing text.
   "insight_summary": "<one sentence, max 100 chars, pt-BR, MUST state financial impact — e.g. 'R$ 1,5k em gasto sem conversão — 4 campanhas requerem intervenção imediata.'>",
   "technical_diagnosis": "<2–3 sentences in English: P1 finding with BRL impact, then P2/P3 brief. Cite CTR and CPC if present in Section 3.>",
   "recommended_action": "<one specific executable action in pt-BR with estimated financial impact>",
-  "priority_score": <integer 1–5>
+  "priority_score": <integer 1–5>,
+  "probable_causes": [
+    {
+      "layer": "<tracking | creative | audience | landing | budget>",
+      "confidence": "<high | medium | low>",
+      "cause": "<concise label in English, max 5 words>",
+      "evidence": "<numeric evidence in pt-BR, max 60 chars — e.g. '7 campanhas · R$ 745 desperdício'>"
+    }
+  ]
 }
+
+probable_causes rules:
+  · Max 3 items. Order by confidence desc; tracking layer always first if Section 4 has failures.
+  · confidence = high when direct evidence is in the input; medium when inferred; low when speculative.
+  · layer must be exactly one of: tracking | creative | audience | landing | budget.
+  · If no causes can be identified → return "probable_causes": [].
 
 Priority score:
   5 — P1 Critical: waste > R$ 500 OR CRITICAL CPA delta — act immediately
@@ -188,6 +206,13 @@ Priority score:
   1 — Informational: no actionable finding`;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+
+type ProbableCause = {
+  layer:      "tracking" | "creative" | "audience" | "landing" | "budget";
+  confidence: "high" | "medium" | "low";
+  cause:      string;
+  evidence:   string;
+};
 
 type SnapshotRow = {
   campaign_name:    string;
@@ -409,6 +434,14 @@ export async function GET() {
       governanceFindings,
     );
 
+    // ── DEBUG: payload inspection (remove after v3.2 validation) ────────────
+    console.log("=== DEBUG: GEMINI FULL PROMPT START ===");
+    console.log(userMessage);
+    console.log("=== DEBUG: GEMINI FULL PROMPT END ===");
+    console.log("[narrative] gov_findings_count:", governanceFindings.length);
+    console.log("[narrative] gov_findings:", JSON.stringify(governanceFindings));
+    // ─────────────────────────────────────────────────────────────────────────
+
     // Call Gemini REST API
     const geminiRes = await fetch(`${GEMINI_URL}?key=${GEMINI_API_KEY}`, {
       method: "POST",
@@ -458,6 +491,15 @@ export async function GET() {
         { status: 502 },
       );
     }
+
+    // Normalise probable_causes — default to [] if absent or malformed
+    const rawCauses = parsed.probable_causes;
+    parsed.probable_causes = Array.isArray(rawCauses) ? rawCauses as ProbableCause[] : [];
+
+    // ── DEBUG: v3.5 cause validation (remove after validation sprint) ─────────
+    console.log("[narrative] probable_causes count:", (parsed.probable_causes as ProbableCause[]).length);
+    console.log("[narrative] probable_causes:", JSON.stringify(parsed.probable_causes));
+    // ─────────────────────────────────────────────────────────────────────────
 
     parsed.insight_summary = truncateSummary(String(parsed.insight_summary));
     parsed.is_simulated = false;

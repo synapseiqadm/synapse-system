@@ -5,12 +5,20 @@ import { Sparkles, ArrowRight, AlertTriangle, Loader2, WifiOff, ExternalLink } f
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+interface ProbableCause {
+  layer:      "tracking" | "creative" | "audience" | "landing" | "budget";
+  confidence: "high" | "medium" | "low";
+  cause:      string;
+  evidence:   string;
+}
+
 interface NarrativeData {
   insight_summary:     string;
   technical_diagnosis: string;
   recommended_action:  string;
   priority_score:      number;
   is_simulated:        boolean;
+  probable_causes?:    ProbableCause[];
 }
 
 type FetchState =
@@ -143,6 +151,41 @@ export function AINarrativeCard() {
           {narrative.technical_diagnosis}
         </p>
       </div>
+
+      {/* Probable causes */}
+      {narrative.probable_causes && narrative.probable_causes.length > 0 && (
+        <div className="px-5 pb-4">
+          <p className="text-[9px] font-semibold text-zinc-600 uppercase tracking-widest mb-2">
+            Causas Prováveis
+          </p>
+          <div className="space-y-1.5">
+            {narrative.probable_causes.map((c, i) => (
+              <div key={i} className="flex items-start gap-2">
+                {/* Layer badge */}
+                <span className={`shrink-0 text-[8px] font-bold px-1.5 py-0.5 rounded border tracking-wide ${
+                  c.layer === "tracking"  ? "bg-red-500/15 text-red-400 border-red-500/20" :
+                  c.layer === "creative"  ? "bg-amber-500/15 text-amber-400 border-amber-500/20" :
+                  c.layer === "audience"  ? "bg-violet-500/15 text-violet-400 border-violet-500/20" :
+                  c.layer === "landing"   ? "bg-orange-500/15 text-orange-400 border-orange-500/20" :
+                                           "bg-emerald-500/15 text-emerald-400 border-emerald-500/20"
+                }`}>
+                  {c.layer.toUpperCase()}
+                </span>
+                {/* Confidence dot */}
+                <span className={`shrink-0 mt-[3px] w-1.5 h-1.5 rounded-full ${
+                  c.confidence === "high"   ? "bg-red-400" :
+                  c.confidence === "medium" ? "bg-amber-400" :
+                                             "bg-zinc-600"
+                }`} title={c.confidence} />
+                <div className="min-w-0">
+                  <p className="text-[10px] text-slate-300 font-medium leading-tight">{c.cause}</p>
+                  <p className="text-[9px] text-zinc-600 leading-relaxed">{c.evidence}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Recommended action */}
       <div
