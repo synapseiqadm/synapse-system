@@ -1,5 +1,8 @@
 import os
 import sys
+import time as _time
+import urllib.error
+import urllib.request
 from datetime import date, datetime, timezone
 from google.cloud import bigquery
 from supabase import Client
@@ -136,6 +139,22 @@ def sync_campaigns(
     return len(records)
 
 
+def _probe_url(url: str) -> tuple[int | None, int | None]:
+    """HEAD-request a URL. Returns (http_status_code, load_time_ms). Both None on network error."""
+    try:
+        req = urllib.request.Request(
+            url, method="HEAD", headers={"User-Agent": "SynapseIQ/1.0"},
+        )
+        t0 = _time.monotonic()
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            ms = int((_time.monotonic() - t0) * 1000)
+            return resp.status, ms
+    except urllib.error.HTTPError as exc:
+        return exc.code, None
+    except Exception:
+        return None, None
+
+
 def sync_ad_groups(
     bq_client: bigquery.Client,
     supabase: Client,
@@ -160,7 +179,8 @@ def sync_ad_groups(
                 WHEN 1 THEN 'AVERAGE'
                 WHEN 2 THEN 'GOOD'
                 WHEN 3 THEN 'EXCELLENT'
-                ELSE 'UNSPECIFIED' END AS worst_strength
+                ELSE 'UNSPECIFIED' END AS worst_strength,
+                ARRAY_AGG(ad_group_ad_ad_final_urls[SAFE_OFFSET(0)] IGNORE NULLS LIMIT 1)[SAFE_OFFSET(0)] AS final_url
             FROM `{GCP_PROJECT_ID}.{GOOGLE_ADS_DATASET}.{AD_TABLE}`
             WHERE ad_group_ad_status = 'ENABLED'
             GROUP BY ad_group_id
@@ -175,7 +195,8 @@ def sync_ad_groups(
             SUM(s.metrics_impressions)           AS impressions,
             SUM(s.metrics_conversions)           AS conversions,
             SUM(s.metrics_conversions_value)     AS conv_value,
-            str.worst_strength
+            str.worst_strength,
+            str.final_url
         FROM `{GCP_PROJECT_ID}.{GOOGLE_ADS_DATASET}.{STATS_TABLE}` s
         JOIN (
             SELECT DISTINCT ad_group_id, ad_group_name
@@ -238,17 +259,33 @@ def sync_ad_groups(
             "conversions":      conversions,
             "roas":             roas,
             "ad_strength":      row.worst_strength or "UNSPECIFIED",
+            "final_url":        row.final_url or None,
+            "http_status_code": None,
+            "load_time_ms":     None,
             "date_range_start": str(DATE_RANGE_START),
             "date_range_end":   str(DATE_RANGE_END),
             "loaded_at":        now,
         })
+
+    # HTTP probe — dedup by URL to avoid duplicate requests
+    probed: dict[str, tuple[int | None, int | None]] = {}
+    for rec in records:
+        url = rec.get("final_url")
+        if url and url not in probed:
+            print(f"[sync_ad_groups] probing {url}", flush=True)
+            probed[url] = _probe_url(url)
+    for rec in records:
+        url = rec.get("final_url")
+        if url and url in probed:
+            rec["http_status_code"], rec["load_time_ms"] = probed[url]
 
     if dry_run:
         print(f"[sync_ad_groups] --dry-run: would upsert {len(records)} records", flush=True)
         for r in records[:5]:
             print(
                 f"  {r['ad_group_name']}: cost=R${r['cost']} ctr={r['ctr']*100:.2f}% "
-                f"conv={r['conversions']} strength={r['ad_strength']}",
+                f"conv={r['conversions']} strength={r['ad_strength']} "
+                f"url={r['final_url']} status={r['http_status_code']}",
                 flush=True,
             )
         return len(records)

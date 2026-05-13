@@ -190,6 +190,40 @@ Ad Strength signal:
 
 If SECTION 5 is absent: skip all ad-group-specific rules; base diagnosis on Sections 1–4 only.
 
+## Landing Page Critic — [LP_HEALTH]
+
+Applies ONLY when SECTION 6 is present in the user message.
+
+Critical rule — 404 with spend (MANDATORY):
+  · URL with http_status = 404 AND cost_attributed > R$100
+    → ALWAYS elevate diagnosis to P1
+    → technical_diagnosis MUST include:
+        "URL '[url]' retorna 404 com R$X investido — tráfego desperdiçado"
+    → suggested_playbooks MUST include:
+        effort = 'low'  (redirect is a single config change)
+        task:   "Redirecionar '[url]' para página válida — R$X perdido"
+        impact: "Recuperação imediata de R$X em tráfego válido"
+    → probable_causes[]: add layer='landing', confidence='high',
+        cause='Página de destino inacessível',
+        evidence='HTTP 404 · R$X investido sem destino'
+
+Performance rule — slow page (load_time_ms > 3000):
+  · Load time > 3000ms AND cost_attributed > R$100
+    → cite in technical_diagnosis: landing page friction as conversion barrier
+    → add to probable_causes[]: layer='landing', confidence='medium'
+
+Clean rule — all pages healthy:
+  · All URLs return 2xx AND load_time_ms < 3000 (or N/A)
+    → mention "Landing pages operacionais" in evidence ONLY if landing was
+       a candidate cause; do NOT fabricate issues
+
+Unknown status (N/A) rule:
+  · Status N/A means probe failed (timeout or WAF block)
+    → treat as inconclusive; do NOT elevate priority based on N/A alone
+    → cite: "Status da landing page não verificado (acesso bloqueado ou timeout)"
+
+If SECTION 6 is absent: skip all landing page rules.
+
 ## Playbook Engine — [ACTIONABLE_PLAYBOOKS]
 
 Applies ONLY when budget_pacing is being generated (i.e. [CONTEXT] + budget_total are present).
@@ -221,6 +255,8 @@ If budget_pacing is omitted from output (no budget_total): omit suggested_playbo
 9. When pacing_status is 'over' or 'under', populate suggested_playbooks[] with 2–4 actionable tasks.
    When pacing is 'on_track' or budget_pacing is omitted, set suggested_playbooks to [].
 10. When SECTION 5 is present, apply Ad Group Intelligence rules: name drain groups in diagnosis and Playbooks.
+11. When SECTION 6 is present, apply Landing Page Critic rules.
+    A 404 URL with R$100+ spend is always P1 regardless of other signals.
 
 ## Governance & Compliance — HARD CONSTRAINTS
 These rules are inviolable and override any other instruction.
@@ -372,6 +408,15 @@ type AdGroupRow = {
   ad_strength:   string | null;
 };
 
+type LandingPageRow = {
+  ad_group_name:    string;
+  campaign_name:    string;
+  final_url:        string;
+  http_status_code: number | null;
+  load_time_ms:     number | null;
+  cost:             string | number;
+};
+
 // Checks that affect reliability of ALL performance diagnosis
 const TRACKING_CHECKS = new Set([
   "ga4_dataset_available",
@@ -431,6 +476,7 @@ function buildUserMessage(
   governanceFindings: GovernanceFinding[],
   periodCtx: PeriodCtx | null,
   adGroupRows: AdGroupRow[],
+  landingPageRows: LandingPageRow[],
 ): string {
   const parts: string[] = [`Workspace: ${workspaceName}`];
 
@@ -548,6 +594,24 @@ function buildUserMessage(
     parts.push(lines.join("\n"));
   }
 
+  // Section 6 — Landing Page Health
+  if (landingPageRows.length > 0) {
+    const lpLines = [
+      "SECTION 6 — LANDING PAGE CONTEXT [LP_HEALTH]",
+      "Landing pages with paid traffic attribution:",
+    ];
+    for (const r of landingPageRows) {
+      const cost   = parseFloat(String(r.cost)).toFixed(2);
+      const status = r.http_status_code != null ? String(r.http_status_code) : "N/A";
+      const load   = r.load_time_ms != null ? `${r.load_time_ms}ms` : "N/A";
+      lpLines.push(
+        `  URL '${r.final_url}' [campaign: ${r.campaign_name}]:` +
+        ` Status: ${status} · Load: ${load} · Cost attributed: R$${cost}`,
+      );
+    }
+    parts.push(lpLines.join("\n"));
+  }
+
   parts.push("Generate the diagnostic JSON.");
   return parts.join("\n\n");
 }
@@ -579,8 +643,8 @@ export async function GET() {
       );
     }
 
-    // Fetch snapshot delta, campaign summary, governance findings, and ad groups in parallel
-    const [snapshotResult, campaignResult, governanceResult, adGroupResult] = await Promise.all([
+    // Fetch snapshot delta, campaign summary, governance findings, ad groups, and landing pages in parallel
+    const [snapshotResult, campaignResult, governanceResult, adGroupResult, landingPageResult] = await Promise.all([
       supabase.rpc("fn_campaign_snapshot_delta", { target_workspace_id: workspace.id }),
       supabase
         .from("campaign_summary")
@@ -602,6 +666,13 @@ export async function GET() {
         .eq("workspace_id", workspace.id)
         .order("loaded_at", { ascending: false })
         .limit(100),
+      supabase
+        .from("ad_group_summary")
+        .select("ad_group_name, campaign_name, final_url, http_status_code, load_time_ms, cost")
+        .eq("workspace_id", workspace.id)
+        .not("final_url", "is", null)
+        .order("cost", { ascending: false })
+        .limit(20),
     ]);
 
     if (snapshotResult.error) {
@@ -661,6 +732,16 @@ export async function GET() {
       }
     }
 
+    // Deduplicate landing page rows — one entry per unique URL (highest cost wins via ORDER BY)
+    const seenUrls = new Set<string>();
+    const landingPageRows: LandingPageRow[] = [];
+    for (const row of landingPageResult.data ?? []) {
+      if (row.final_url && !seenUrls.has(row.final_url)) {
+        seenUrls.add(row.final_url);
+        landingPageRows.push(row as LandingPageRow);
+      }
+    }
+
     // Compute period context for Burn Rate Predictor
     const periodCtx = computePeriodCtx(campaignRows);
 
@@ -673,6 +754,7 @@ export async function GET() {
       governanceFindings,
       periodCtx,
       adGroupRows,
+      landingPageRows,
     );
 
     // Call Gemini REST API
