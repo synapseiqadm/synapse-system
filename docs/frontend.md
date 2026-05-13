@@ -36,11 +36,13 @@
 
 | Rota | Método | Descrição |
 |---|---|---|
-| `/api/ai/narrative` | GET | Diagnóstico Gemini 2.5 Flash — snapshot delta + campaign data + governance (SECTION 4) + `probable_causes[]` |
+| `/api/ai/narrative` | GET | Diagnóstico Gemini 2.5 Flash — snapshot delta + campaign data + governance (SECTION 4) + ad groups (SECTION 5) + landing pages (SECTION 6) + `probable_causes[]` |
 | `/api/agents/decisions` | GET | Lê `agent_decisions`; fallback on-the-fly de `campaign_summary`; inclui `probableCauses` determinísticos |
 | `/api/agents/action` | PATCH | Persiste `approved`/`rejected` em `agent_decisions` por `dbId` |
 | `/api/connectors/status` | GET | Status live de Google Ads + GA4 via `sync_runs`; tracking issues de `data_quality_report` |
 | `/api/cron/guardian` | GET | Vercel Cron — alertas P1 via Resend; auth: `Authorization: Bearer <CRON_SECRET>` |
+| `/api/admin/workspaces` | GET | Lista todos os workspaces (superadmin only via `SUPABASE_SERVICE_KEY`) |
+| `/api/workspaces/switch` | POST | Define cookie `synapseiq_workspace` para workspace switching |
 | `/api/workspaces/[id]/growth/overview` | GET | GA4 + campaign + quality + insights |
 | `/api/workspaces/[id]/growth/funnel` | GET | `ga4_first_light_summary` |
 | `/api/workspaces/[id]/growth/events` | GET | `ga4_first_light_summary` |
@@ -74,16 +76,13 @@ Implementada em três camadas:
 2. **`src/utils/supabase/server.ts`** — cliente SSR para Server Components / API Routes.
 3. **`src/utils/supabase/client.ts`** — cliente browser para `"use client"` components.
 
-Resolução de workspace em API Routes:
+Resolução de workspace em API Routes — `src/lib/resolve-workspace.ts`:
 ```typescript
-async function resolveWorkspace(supabase) {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
-  const { data: profile } = await supabase.from("profiles").select("workspace_id").eq("id", user.id).single();
-  // ...
-  return { id, name, slug };
-}
+// Prioridade: cookie synapseiq_workspace → profiles.workspace_id
+// Superadmin: pode switch entre qualquer tenant via cookie
+async function resolveWorkspace(supabase): Promise<Workspace | null>
 ```
+`createAdminClient()` em `src/utils/supabase/admin.ts` — usa `SUPABASE_SERVICE_KEY`, server-only, nunca exposto ao browser.
 
 ---
 
@@ -114,7 +113,7 @@ Nenhum UUID de workspace está duplicado em ficheiros de componente.
 | `AgentDecisionFeed` | Feed de decisões: filtro por tipo, approve/reject com PATCH + `router.refresh()` + `onRefresh()`, feedback optimista |
 | `AgentCard` | Card de agente com status `preview` (oculta métricas de runtime) |
 | `SyncRunsTable` | Tabela de execuções com linhas expansíveis, `LogStatusBadge`, empty state |
-| `Sidebar` | Navegação hierárquica com badge de workspace, "Status do Sync", "Agentes de IA" com badge Preview |
+| `Sidebar` | Navegação hierárquica com badge de workspace, "Status do Sync", "Agentes de IA" com badge Preview; dropdown workspace switcher visível apenas para `role='superadmin'` |
 
 ---
 

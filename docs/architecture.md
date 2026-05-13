@@ -1,6 +1,6 @@
 # Arquitectura — SynapseIQ
 
-**Estado actual:** v4.3.1 (Maio 2026)
+**Estado actual:** v4.5 (Maio 2026)
 
 ---
 
@@ -24,6 +24,8 @@ GitHub (synapseiqadm/synapse-system)
 │       │       ├── agents/action/route.ts
 │       │       ├── connectors/status/route.ts  → sync_runs + data_quality_report por plataforma
 │       │       ├── cron/guardian/route.ts       → Vercel Cron P1 alertas via Resend
+│       │       ├── admin/workspaces/route.ts   → lista workspaces (superadmin only)
+│       │       ├── workspaces/switch/route.ts  → define cookie de workspace activo
 │       │       └── workspaces/[workspace_id]/
 │       │           ├── growth/{overview,funnel,events,paid-sessions}/route.ts
 │       │           ├── governance/{summary,runs,findings,evidence}/route.ts
@@ -42,19 +44,20 @@ GitHub (synapseiqadm/synapse-system)
 │       │   └── ...
 │       ├── lib/
 │       │   ├── workspace.ts         → DEFAULT_WORKSPACE (fonte única de tenant ID)
+│       │   ├── resolve-workspace.ts → resolveWorkspace() — cookie synapseiq_workspace → DB lookup
 │       │   ├── api/{common,growth,governance,sync_runs}.ts
 │       │   ├── funnel.ts
 │       │   ├── decision.ts
 │       │   ├── measurementConfig.ts
 │       │   ├── semanticRegistry.ts
 │       │   └── mail.ts              → sendGuardianAlert() via Resend SDK; mock logger se key ausente
-│       └── utils/supabase/{client,server}.ts
+│       └── utils/supabase/{client,server,admin}.ts  → admin.ts: createAdminClient() server-only
 │
 ├── backend/connectors/
 │   ├── a_data_sync.py           → entry point do pipeline
 │   ├── config.py                → env vars + fail-fast
 │   ├── sync_runs.py             → auditoria de execuções
-│   ├── sync_ads.py              → BigQuery → campaign_summary / keyword_analysis / kpi_cache_daily
+│   ├── sync_ads.py              → BigQuery → campaign_summary / ad_group_summary / keyword_analysis / kpi_cache_daily
 │   ├── sync_ga4.py              → GA4 First Light
 │   ├── data_quality.py          → 19 checks A–S
 │   ├── insights.py              → gerador determinístico + semântico
@@ -69,13 +72,16 @@ GitHub (synapseiqadm/synapse-system)
 ├── backend/governance/
 │   ├── semantic_registry.yml
 │   ├── templates/tenant_measurement_config.template.yml
-│   └── tenants/woke_measurement_config.yml
+│   └── tenants/
+│       ├── woke_measurement_config.yml
+│       ├── pigz_measurement_config.yml
+│       └── cacau_measurement_config.yml
 │
 ├── backend/tests/
 │   ├── test_semantic_governance.py   → 36 testes unitários
 │   └── test_ai_narrative.py          → 5 testes (4 mock + 1 live)
 │
-├── supabase/migrations/             → 015 migrations aplicadas (000–015)
+├── supabase/migrations/             → 017 migrations aplicadas (000–017)
 ├── frontend/vercel.json             → Vercel Cron: /api/cron/guardian a cada 4h
 │
 ├── docs/
@@ -90,7 +96,9 @@ GitHub (synapseiqadm/synapse-system)
 │       ├── fn_campaign_snapshot_delta.sql
 │       └── ...drafts (NÃO aplicar como migration)
 │
-└── .github/workflows/sync_data.yml  → GitHub Actions (cron diário 09h UTC / 06h BRT)
+├── .github/workflows/sync_data.yml       → Woke People (cron diário 09h UTC / 06h BRT)
+├── .github/workflows/sync_data_pigz.yml  → Pigz (cron 09:30 UTC / 06:30 BRT)
+└── .github/workflows/sync_data_cacau.yml → Cacau Turismo (cron 10h UTC / 07h BRT)
 ```
 
 ---
@@ -150,24 +158,42 @@ Vercel Cron (a cada 4h) → /api/cron/guardian
 |---|---|
 | Isolamento | RLS em todas as tabelas; queries sempre filtradas por `workspace_id` |
 | Auth | Supabase Auth SSR — `profiles.workspace_id` resolve o tenant da sessão |
-| Workspace pivot | `src/lib/workspace.ts` — fonte única; suporta override por `NEXT_PUBLIC_DEFAULT_WORKSPACE_*` |
+| Workspace pivot | `resolve-workspace.ts` — `resolveWorkspace()`: cookie `synapseiq_workspace` → DB lookup → fallback `profiles.workspace_id` |
+| Superadmin | `profiles.role='superadmin'` → bypass via `SUPABASE_SERVICE_KEY`; sidebar workspace switcher visível apenas para superadmin |
+| Workspace switch | `/api/workspaces/switch` define cookie `synapseiq_workspace`; `/api/admin/workspaces` lista todos (superadmin only) |
 | Onboarding | Assistido (manual via admin) — sem self-service UI ainda |
-| Tenant piloto | Woke People (`a082fe86-a65f-4c9b-9442-fe775f47e3fc`) |
+| Tenants activos | Woke People (`a082fe86`), Pigz (`63fd5033`), Cacau Turismo (`b7126974`) |
+
+### Tenants e Pipelines
+
+| Tenant | workspace_id | Google Ads Customer ID | BQ Dataset | Cron (UTC) |
+|---|---|---|---|---|
+| Woke People | `a082fe86-...` | `6627867790` | `raw_google_ads_woke` | `0 9 * * *` |
+| Pigz | `63fd5033-...` | `8378967509` | `raw_google_ads_pigz` | `30 9 * * *` |
+| Cacau Turismo | `b7126974-...` | `7184417498` | `raw_google_ads_cacau` | `0 10 * * *` |
 
 ---
 
 ## CI/CD
 
-### GitHub Actions (`sync_data.yml`)
+### GitHub Actions — 3 Pipelines por Tenant
+
+| Workflow | Tenant | Cron (UTC) | Cron (BRT) |
+|---|---|---|---|
+| `sync_data.yml` | Woke People | `0 9 * * *` | 06h |
+| `sync_data_pigz.yml` | Pigz | `30 9 * * *` | 06:30h |
+| `sync_data_cacau.yml` | Cacau Turismo | `0 10 * * *` | 07h |
+
+**Padrão comum a todos os workflows:**
 
 | Campo | Valor |
 |---|---|
-| Trigger | `schedule: cron: "0 9 * * *"` (06h BRT) + `workflow_dispatch` |
 | Input | `dry_run` (boolean, default `true`) |
-| Concurrency | `group: a-data-sync-woke`, `cancel-in-progress: false` |
+| Concurrency | `group: a-data-sync-<tenant>`, `cancel-in-progress: false` |
 | Runner | `ubuntu-latest` |
 | Comando | `cd backend && python -m connectors.a_data_sync [--dry-run]` |
 | GCP creds | `GOOGLE_CREDENTIALS_JSON` (base64) → `/tmp/gcp_credentials.json` → removido com `if: always()` |
+| Env tenant | `WORKSPACE_ID`, `GOOGLE_ADS_CUSTOMER_ID`, `GOOGLE_ADS_DATASET` específicos por tenant |
 
 **Comportamento do cron:** `inputs.dry_run` não existe em execuções agendadas — condição avalia `false` → pipeline executa sem `--dry-run`.
 

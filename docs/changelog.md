@@ -300,3 +300,45 @@ A Fase 3 transformou o SynapseIQ de sistema de alertas de performance para siste
 **Docs:** `changelog.md`, `frontend.md`, `architecture.md` actualizados para v4.3.1.
 
 `commit: feat(v4.3.1): fix agent ordering, adjust drain threshold and update docs`
+
+---
+
+## v4.4 — Landing Page Critic: HTTP Probe + SECTION 6 [LP_HEALTH]
+
+**Entregues:**
+- **Migration 017** (`017_ad_group_summary_url.sql`): `ADD COLUMN IF NOT EXISTS final_url TEXT, http_status_code INTEGER, load_time_ms INTEGER` em `ad_group_summary`
+- **`sync_ad_groups()` em `sync_ads.py`**: BigQuery CTE extrai `final_url` via `ARRAY_AGG(ad_group_ad_ad_final_urls[SAFE_OFFSET(0)] IGNORE NULLS LIMIT 1)`; `_probe_url()` faz HEAD request (urllib.request stdlib, timeout 8s) por URL única; armazena `http_status_code` + `load_time_ms`; NULL para PMax/Display
+- **`narrative/route.ts`**: tipo `LandingPageRow`; 5º fetch paralelo de `ad_group_summary WHERE final_url IS NOT NULL`; dedup por URL; `buildUserMessage()` gera SECTION 6 `[LP_HEALTH]`; SYSTEM_PROMPT `## Landing Page Critic` com 4 regras: 404+R$100 → P1 obrigatório, load>3s+R$100 → medium confidence, todas 2xx → sem ruído, N/A → inconclusivo; ponto 11 em `## Your role`
+
+**Comportamento:**
+- URL com 404 + custo > R$100 → P1, `technical_diagnosis` cita URL, `suggested_playbooks` inclui redirect com `effort='low'`
+- Status N/A (WAF ou timeout) → tratado como inconclusivo, não eleva prioridade
+- PMax/Display → `final_url=NULL` → skip probe → graceful
+
+`commit: 0ab80e5`
+
+---
+
+## v4.5 — Multi-Tenant Agency Model + Pigz Onboarding
+
+**Entregues:**
+
+**Arquitectura multi-tenant (superadmin):**
+- `profiles.role='superadmin'` — bypass de workspace via `SUPABASE_SERVICE_KEY` (Plan B)
+- `frontend/src/lib/resolve-workspace.ts` — `resolveWorkspace()` partilhado: cookie `synapseiq_workspace` → DB lookup; substitui 4 implementações inline nas routes `/api/agents/action`, `/api/agents/decisions`, `/api/ai/narrative`, `/api/connectors/status`
+- `frontend/src/utils/supabase/admin.ts` — `createAdminClient()` server-only, nunca `NEXT_PUBLIC_`
+- `/api/admin/workspaces` — lista todos os workspaces (superadmin only, via `SUPABASE_SERVICE_KEY`)
+- `/api/workspaces/switch` — define cookie `synapseiq_workspace` com `workspace_id` escolhido
+- `Sidebar.tsx` — dropdown workspace switcher visível apenas para `role='superadmin'`
+
+**Backend multi-tenant:**
+- `WOKE_WORKSPACE_ID` → `WORKSPACE_ID` em `config.py` e 7 ficheiros backend
+- `sync_ads.py`: `_parse_final_url()` normaliza esquemas STRING vs REPEATED do BigQuery export; fallback `MAX()` para tenants com `final_urls` como STRING (Pigz); `ANY_VALUE(str.final_url)` no GROUP BY externo
+
+**Pigz onboarding:**
+- `.github/workflows/sync_data_pigz.yml` — cron `30 9 * * *` (06:30 BRT); `WORKSPACE_ID: 63fd5033`, `GOOGLE_ADS_CUSTOMER_ID: 8378967509`, `GOOGLE_ADS_DATASET: raw_google_ads_pigz`
+- `.github/workflows/sync_data_cacau.yml` — cron `0 10 * * *` (07:00 BRT); `WORKSPACE_ID: b7126974`, `GOOGLE_ADS_CUSTOMER_ID: 7184417498`, `GOOGLE_ADS_DATASET: raw_google_ads_cacau`
+- `governance/tenants/pigz_measurement_config.yml` + `cacau_measurement_config.yml` — configs de governança por tenant
+- **Validado:** Pigz pipeline — 7 campanhas, 10 ad_groups, 26 keywords
+
+`commit: 8c5684b`
