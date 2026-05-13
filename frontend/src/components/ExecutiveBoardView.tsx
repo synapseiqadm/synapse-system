@@ -331,7 +331,7 @@ function DomainRow({ label, status, qualifier }: { label: string; status: Domain
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export function ExecutiveBoardView() {
+export function ExecutiveBoardView({ workspaceId }: { workspaceId: string }) {
   const supabase = createClient();
 
   const [insights, setInsights] = useState<MinInsight[]>([]);
@@ -350,38 +350,38 @@ export function ExecutiveBoardView() {
         supabase
           .from("insight_feed")
           .select("insight_type, status, evidence, dedupe_key, date_range_start")
-          .eq("workspace_id", DEFAULT_WORKSPACE.id)
+          .eq("workspace_id", workspaceId)
           .order("updated_at", { ascending: false })
           .limit(100),
         supabase
           .from("ga4_first_light_summary")
           .select("sessions, top_events")
-          .eq("workspace_id", DEFAULT_WORKSPACE.id)
+          .eq("workspace_id", workspaceId)
           .limit(1)
           .maybeSingle(),
         supabase
           .from("data_quality_report")
           .select("check_name, status, checked_at")
-          .eq("workspace_id", DEFAULT_WORKSPACE.id)
+          .eq("workspace_id", workspaceId)
           .order("checked_at", { ascending: false })
           .limit(200),
         supabase
           .from("sync_runs")
           .select("data_source, status, started_at, finished_at")
-          .eq("workspace_id", DEFAULT_WORKSPACE.id)
+          .eq("workspace_id", workspaceId)
           .order("started_at", { ascending: false })
           .limit(20),
         supabase
           .from("kpi_cache_daily")
           .select("date, metric_name, metric_value")
-          .eq("workspace_id", DEFAULT_WORKSPACE.id)
+          .eq("workspace_id", workspaceId)
           .in("metric_name", ["roas", "total_cost"])
           .gte("date", sinceDate(30))
           .order("date", { ascending: true }),
         supabase
           .from("operational_events")
           .select("category, title, description, impact_scope, occurred_at")
-          .eq("workspace_id", DEFAULT_WORKSPACE.id)
+          .eq("workspace_id", workspaceId)
           .eq("category", "kpi_anomaly")
           .order("occurred_at", { ascending: false })
           .limit(30),

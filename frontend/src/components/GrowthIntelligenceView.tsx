@@ -1046,7 +1046,7 @@ function EvidenceSection({ state, env }: { state: ApiState<GovernanceEvidenceRes
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export function GrowthIntelligenceView() {
+export function GrowthIntelligenceView({ workspaceId }: { workspaceId: string }) {
   const [period, setPeriod] = useState<Period>(30);
   const [env,    setEnv]    = useState<EnvFilter>("all");
 
@@ -1068,7 +1068,7 @@ export function GrowthIntelligenceView() {
   useEffect(() => {
     let cancelled = false;
 
-    const wid    = DEFAULT_WORKSPACE.id;
+    const wid    = workspaceId;
     const base   = `/api/workspaces/${wid}`;
     const params: Record<string, string | undefined> = {
       date_start:  sinceDate(period),
@@ -1096,7 +1096,7 @@ export function GrowthIntelligenceView() {
     });
 
     return () => { cancelled = true; };
-  }, [period, env]);
+  }, [period, env, workspaceId]);
 
   // Collect envelope-level warnings from successful responses
   const envelopeWarnings = [overview, funnel, events, paidSessions, govSummary, findings, evidence]

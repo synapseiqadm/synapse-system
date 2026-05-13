@@ -628,7 +628,7 @@ type TypeFilter   = "all" | "high_priority" | "campaigns" | "keywords" | "qualit
 
 // ─── Main view ────────────────────────────────────────────────────────────────
 
-export function InsightsView() {
+export function InsightsView({ workspaceId }: { workspaceId: string }) {
   const supabase = createClient();
 
   const [insights, setInsights]     = useState<InsightFeedItem[]>([]);
@@ -647,7 +647,7 @@ export function InsightsView() {
       const { data, error: sbError } = await supabase
         .from("insight_feed")
         .select("*")
-        .eq("workspace_id", DEFAULT_WORKSPACE.id)
+        .eq("workspace_id", workspaceId)
         .order("updated_at", { ascending: false })
         .limit(100);
       if (sbError) { setError(sbError.message); setLoading(false); return; }
@@ -662,7 +662,7 @@ export function InsightsView() {
       const { data } = await supabase
         .from("ga4_first_light_summary")
         .select("sessions, top_events")
-        .eq("workspace_id", DEFAULT_WORKSPACE.id)
+        .eq("workspace_id", workspaceId)
         .limit(1)
         .maybeSingle();
       if (data) {

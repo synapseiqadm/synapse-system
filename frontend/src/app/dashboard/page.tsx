@@ -677,12 +677,12 @@ export default function DashboardPage() {
 
         {/* Body */}
         <main className="flex-1 overflow-y-auto p-6">
-          {nav === "geral"      && <ExecutiveBoardView />}
-          {nav === "growth"     && <GrowthIntelligenceView />}
+          {nav === "geral"      && <ExecutiveBoardView workspaceId={activeWorkspaceId} />}
+          {nav === "growth"     && <GrowthIntelligenceView workspaceId={activeWorkspaceId} />}
           {nav === "campanhas"  && <CampanhasView campaigns={campaigns} loading={campaignsLoading} />}
           {nav === "keywords"   && <KeywordsView  keywords={keywords}   loading={keywordsLoading} />}
-          {nav === "qualidade"  && <DataQualityView />}
-          {nav === "insights"   && <InsightsView />}
+          {nav === "qualidade"  && <DataQualityView workspaceId={activeWorkspaceId} />}
+          {nav === "insights"   && <InsightsView workspaceId={activeWorkspaceId} />}
 
           {(nav === "canais" || nav === "configuracoes") && (
             <div className="flex flex-col items-center justify-center h-64 text-zinc-700">

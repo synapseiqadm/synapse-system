@@ -209,7 +209,7 @@ type SortOption   = "severity" | "date" | "rows";
 
 // ─── Main view ────────────────────────────────────────────────────────────────
 
-export function DataQualityView() {
+export function DataQualityView({ workspaceId }: { workspaceId: string }) {
   const supabase = createClient();
 
   const [checks, setChecks]         = useState<DataQualityReport[]>([]);
@@ -225,7 +225,7 @@ export function DataQualityView() {
       const { data, error: sbError } = await supabase
         .from("data_quality_report")
         .select("*")
-        .eq("workspace_id", DEFAULT_WORKSPACE.id)
+        .eq("workspace_id", workspaceId)
         .order("checked_at", { ascending: false })
         .limit(200);
       if (sbError) { setError(sbError.message); setLoading(false); return; }
