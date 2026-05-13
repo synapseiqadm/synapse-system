@@ -138,15 +138,16 @@ export default function ConnectorsPage() {
 
   const fetchStatus = useCallback(async () => {
     setLoading(true);
+    setTrackingIssues([]); // clear before fetch to avoid stale state
     try {
-      const res  = await fetch("/api/connectors/status");
+      const res  = await fetch("/api/connectors/status", { cache: "no-store" });
       const body = await res.json();
       if (body.ok && body.data) {
         setConnectors(buildConnectors(body.data.google_ads, body.data.ga4));
         setTrackingIssues(body.data.tracking_issues ?? []);
       }
     } catch {
-      // keep previous state on network error
+      // keep connectors state on network error
     } finally {
       setLoading(false);
     }
@@ -182,7 +183,9 @@ export default function ConnectorsPage() {
   const pendingCount      = connectors.filter((c) => c.status === "pending").length;
   const disconnectedCount = connectors.filter((c) => c.status === "disconnected").length;
   const errorCount        = connectors.filter((c) => c.status === "error").length;
-  const hasTrackingAlert  = trackingIssues.length > 0;
+  const hasCriticalIssues = trackingIssues.some(
+    (i) => i.status === "failed" || i.severity === "high" || i.severity === "critical",
+  );
 
   return (
     <div className="flex h-screen bg-[#09090b] text-slate-200 overflow-hidden font-sans">
@@ -238,21 +241,27 @@ export default function ConnectorsPage() {
             })}
           </div>
 
-          {/* Tracking integrity alert */}
-          {hasTrackingAlert && (
+          {/* Tracking integrity alert — red for high/critical/failed */}
+          {hasCriticalIssues && (
             <div className="flex items-start gap-3 bg-red-500/5 border border-red-500/20 rounded-xl px-4 py-3 mb-4">
               <ShieldAlert size={16} className="text-red-400 flex-shrink-0 mt-0.5" />
               <div>
-                <p className="text-xs font-semibold text-red-300">Problemas de integridade de tracking detectados</p>
+                <p className="text-xs font-semibold text-red-300">
+                  ⚠️ Atenção: Tracking de Campanhas comprometido
+                </p>
                 <p className="text-[11px] text-red-700 mt-0.5">
-                  {trackingIssues.map((i) => i.check_name).join(" · ")} — os diagnósticos de IA podem ser afectados.
+                  {trackingIssues
+                    .filter((i) => i.status === "failed" || i.severity === "high" || i.severity === "critical")
+                    .map((i) => i.check_name)
+                    .join(" · ")}{" "}
+                  — diagnósticos de IA podem não reflectir performance real.
                 </p>
               </div>
             </div>
           )}
 
           {/* All synced banner */}
-          {!hasTrackingAlert && syncedCount === 2 && !loading && (
+          {!hasCriticalIssues && syncedCount === 2 && !loading && (
             <div className="flex items-center gap-3 bg-emerald-500/5 border border-emerald-500/15 rounded-xl px-4 py-3 mb-4">
               <ShieldCheck size={16} className="text-emerald-400 flex-shrink-0" />
               <div>

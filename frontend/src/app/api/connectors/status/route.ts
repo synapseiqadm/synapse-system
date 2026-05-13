@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/utils/supabase/server";
 import { DEFAULT_WORKSPACE } from "@/lib/workspace";
 
+export const dynamic   = "force-dynamic";
+export const revalidate = 0;
+
 async function resolveWorkspace(supabase: Awaited<ReturnType<typeof createClient>>) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;
