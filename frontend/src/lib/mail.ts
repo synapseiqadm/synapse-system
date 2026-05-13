@@ -21,7 +21,6 @@ export async function sendGuardianAlert(
 ): Promise<{ ok: boolean; id?: string }> {
   if (!resend) {
     console.warn("[mail] RESEND_API_KEY absent — mock alert for decision", payload.decision_id);
-    console.log("[mail] Would send to:", payload.to, "| title:", payload.title);
     return { ok: true, id: "mock" };
   }
 
