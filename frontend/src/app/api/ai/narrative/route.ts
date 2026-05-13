@@ -164,6 +164,22 @@ recommendation (pt-BR, max 80 chars):
 
 If NO campaign has budget_total > 0: omit budget_pacing entirely from the JSON output.
 
+## Playbook Engine — [ACTIONABLE_PLAYBOOKS]
+
+Applies ONLY when budget_pacing is being generated (i.e. [CONTEXT] + budget_total are present).
+
+MANDATORY rule:
+  · pacing_status = 'over'     → MUST generate suggested_playbooks[] (2–4 items)
+  · pacing_status = 'under'    → MUST generate suggested_playbooks[] (2–4 items)
+  · pacing_status = 'on_track' → suggested_playbooks MUST be [] (empty array)
+
+Each playbook item:
+  task   — specific action in pt-BR, max 80 chars (e.g. "Reduzir lance em 15% nas campanhas com CPA > meta")
+  impact — projected financial effect in pt-BR, max 60 chars (e.g. "Economia ~R$200 no período restante")
+  effort — exactly one of: "low" | "medium" | "high"
+
+If budget_pacing is omitted from output (no budget_total): omit suggested_playbooks entirely.
+
 ## Your role
 1. Classify all signals into P1/P2/P3.
 2. Lead with the highest-priority finding; cite lower tiers in technical_diagnosis.
@@ -176,6 +192,8 @@ If NO campaign has budget_total > 0: omit budget_pacing entirely from the JSON o
    - Derive evidence from exact numbers in the input (campaign count, R$ amounts, check names).
    - If no causes can be inferred from available data, return an empty array [].
 8. Apply Financial Forecaster when [CONTEXT] and budget_total are present. Populate budget_pacing in output; omit the field entirely if no budget data is available.
+9. When pacing_status is 'over' or 'under', populate suggested_playbooks[] with 2–4 actionable tasks.
+   When pacing is 'on_track' or budget_pacing is omitted, set suggested_playbooks to [].
 
 ## Governance & Compliance — HARD CONSTRAINTS
 These rules are inviolable and override any other instruction.
@@ -223,10 +241,19 @@ Single valid JSON object. No markdown fences. No trailing text.
     "estimated_total_spend": <number — projected total spend at current burn rate>,
     "days_until_exhaustion": <integer | null — null when on_track or under>,
     "recommendation": "<string pt-BR, max 80 chars>"
-  }
+  },
+  "suggested_playbooks": [
+    {
+      "task":   "<acção específica em pt-BR, max 80 chars>",
+      "impact": "<efeito financeiro projetado em pt-BR, max 60 chars>",
+      "effort": "<low | medium | high>"
+    }
+  ]
 }
 
 Note: budget_pacing is optional — include only when budget_total data is available in SECTION 1.
+Note: suggested_playbooks is optional — include only when budget_pacing is present.
+When pacing_status = 'on_track', include suggested_playbooks: [].
 
 probable_causes rules:
   · Max 3 items. Order by confidence desc; tracking layer always first if Section 4 has failures.
@@ -297,6 +324,12 @@ type BudgetPacing = {
   estimated_total_spend: number;
   days_until_exhaustion: number | null;
   recommendation:        string;
+};
+
+type SuggestedPlaybook = {
+  task:   string;
+  impact: string;
+  effort: "low" | "medium" | "high";
 };
 
 // Checks that affect reliability of ALL performance diagnosis
@@ -603,6 +636,16 @@ export async function GET() {
       parsed.budget_pacing = rawPacing as BudgetPacing;
     } else {
       delete parsed.budget_pacing;
+    }
+
+    // Normalise suggested_playbooks — include only when valid array; strip otherwise
+    const rawPlaybooks = parsed.suggested_playbooks;
+    if (Array.isArray(rawPlaybooks)) {
+      parsed.suggested_playbooks = (rawPlaybooks as SuggestedPlaybook[]).filter(
+        (p) => p && typeof p.task === "string" && ["low", "medium", "high"].includes(p.effort),
+      );
+    } else {
+      delete parsed.suggested_playbooks;
     }
 
     parsed.insight_summary = truncateSummary(String(parsed.insight_summary));

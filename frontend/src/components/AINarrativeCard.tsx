@@ -19,6 +19,12 @@ interface BudgetPacingData {
   recommendation:        string;
 }
 
+interface SuggestedPlaybook {
+  task:   string;
+  impact: string;
+  effort: "low" | "medium" | "high";
+}
+
 interface NarrativeData {
   insight_summary:     string;
   technical_diagnosis: string;
@@ -27,6 +33,7 @@ interface NarrativeData {
   is_simulated:        boolean;
   probable_causes?:    ProbableCause[];
   budget_pacing?:      BudgetPacingData;
+  suggested_playbooks?: SuggestedPlaybook[];
 }
 
 type FetchState =
@@ -126,6 +133,45 @@ function BudgetPacingBadge({ pacing }: { pacing: BudgetPacingData }) {
   );
 }
 
+function PlaybookChecklist({ playbooks }: { playbooks: SuggestedPlaybook[] }) {
+  if (playbooks.length === 0) return null;
+
+  const effortColors: Record<string, string> = {
+    low:    "bg-emerald-500/15 text-emerald-400 border-emerald-500/20",
+    medium: "bg-amber-500/15 text-amber-400 border-amber-500/20",
+    high:   "bg-red-500/15 text-red-400 border-red-500/20",
+  };
+  const effortLabel: Record<string, string> = {
+    low: "BAIXO", medium: "MÉDIO", high: "ALTO",
+  };
+
+  return (
+    <div className="mx-5 mb-3 rounded-lg border border-zinc-800/60 bg-zinc-900/30 px-3 py-2.5">
+      <p className="text-[9px] font-semibold text-zinc-600 uppercase tracking-widest mb-2">
+        Checklist de Contingência
+      </p>
+      <div className="space-y-2">
+        {playbooks.map((p, i) => (
+          <div key={i} className="flex items-start gap-2">
+            <div className="mt-[2px] w-3 h-3 shrink-0 rounded border border-zinc-700 bg-zinc-900" />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <p className="text-[10px] text-slate-300 font-medium leading-tight">{p.task}</p>
+                <span className={`shrink-0 text-[8px] font-bold px-1 py-0.5 rounded border tracking-wide ${effortColors[p.effort] ?? effortColors.medium}`}>
+                  {effortLabel[p.effort] ?? p.effort.toUpperCase()}
+                </span>
+              </div>
+              {p.impact && (
+                <p className="text-[9px] text-zinc-600 leading-relaxed mt-0.5">{p.impact}</p>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 const PREVIEW_PREFIX = "[PREVIEW DE TESTE] ";
@@ -201,6 +247,11 @@ export function AINarrativeCard() {
       {/* Budget pacing */}
       {narrative.budget_pacing && (
         <BudgetPacingBadge pacing={narrative.budget_pacing} />
+      )}
+
+      {/* Playbook checklist */}
+      {narrative.suggested_playbooks && narrative.suggested_playbooks.length > 0 && (
+        <PlaybookChecklist playbooks={narrative.suggested_playbooks} />
       )}
 
       {/* Probable causes */}
