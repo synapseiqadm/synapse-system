@@ -343,7 +343,7 @@ def main(dry_run: bool = False) -> None:
             supabase.table("campaign_summary")
             .select("campaign_name,roas,cost,conversions")
             .eq("workspace_id", WOKE_WORKSPACE_ID)
-            .order("date", desc=True)
+            .order("date_range_end", desc=True)
             .execute()
         )
         # Deduplicate: keep most-recent row per campaign_name

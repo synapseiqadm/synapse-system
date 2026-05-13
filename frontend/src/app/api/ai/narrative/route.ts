@@ -172,8 +172,8 @@ Use SECTION 5 to enrich diagnosis and Playbooks with specific Ad Group names.
 
 Drain rule — MANDATORY when SECTION 5 contains drain groups:
   · Drain group = cost > R$0, conversions = 0
-  · If a drain group has cost > R$500 → name it explicitly in technical_diagnosis
-  · If a drain group has cost > R$500 → the suggested_playbook task MUST cite its name:
+  · If a drain group has cost > R$100 → name it explicitly in technical_diagnosis
+  · If a drain group has cost > R$100 → the suggested_playbook task MUST cite its name:
       effort = 'low'  (pausing is a single click)
       task:   "Pausar grupo '<name>' — CTR X%, R$Y sem retorno"
       impact: "Economia de R$Y no período restante"

@@ -1,6 +1,6 @@
 # Arquitectura — SynapseIQ
 
-**Estado actual:** v4.2 (Maio 2026)
+**Estado actual:** v4.3.1 (Maio 2026)
 
 ---
 
@@ -102,6 +102,7 @@ Google Ads (BigQuery raw_google_ads_woke)
     ↓
 sync_ads.py
     ├── sync_campaigns()        → campaign_summary
+    ├── sync_ad_groups()        → ad_group_summary
     ├── sync_kpi_cache_daily()  → kpi_cache_daily
     └── sync_keywords()         → keyword_analysis
 

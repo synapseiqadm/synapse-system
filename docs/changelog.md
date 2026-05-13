@@ -272,3 +272,31 @@ A Fase 3 transformou o SynapseIQ de sistema de alertas de performance para siste
 - **Multi-tenant onboarding:** substituir policies `TO public` scoped ao UUID Woke por `TO authenticated` dinâmico
 - **Creative Critic enrichment:** ingestão de dados de anúncio (ad_name, ad_group) para diagnóstico a nível criativo
 - **Self-healing suggestions:** sugestões de realocação de budget com preview de impacto quantificado
+
+---
+
+## v4.3 — Ad Group Intelligence: Creative Critic
+
+**Entregues:**
+- **Migration 016** (`016_ad_group_summary.sql`): tabela `ad_group_summary` com RLS workspace-scoped — `workspace_id, ad_group_id, ad_group_name, campaign_id, campaign_name, cost, clicks, impressions, ctr, conversions, roas, ad_strength, date_range_start, date_range_end`; constraint UNIQUE `(workspace_id, ad_group_id, date_range_start, date_range_end)`
+- **`sync_ad_groups()`** em `sync_ads.py`: BigQuery CTE `strength_by_group` (pior ad strength por grupo) + JOIN `AdGroupBasicStats` + `AdGroup` + `Campaign`; dedup Python por `ad_group_id` (mantém linha de maior custo — artefacto do BigQuery export); upsert Supabase com ON CONFLICT DO NOTHING; 18 grupos únicos carregados
+- **`a_data_sync.py`**: bloco completo de ad groups (sync_runs + operational_events + error handling); log final inclui `ad_groups=N`
+- **`narrative/route.ts` — SECTION 5 [CREATIVE_CONTEXT]**: fetch paralelo `ad_group_summary` (ordered por `cost DESC`); 3 drains (cost > 0, conv = 0) + 2 top performers (ROAS ou CTR) injectados no user message
+- **SYSTEM_PROMPT — `## Ad Group Intelligence — [CREATIVE_CONTEXT]`**: drain rule (cost > R$100 → citar nome explicitamente em `technical_diagnosis` + item obrigatório em `suggested_playbooks` com effort='low'); CTR < 1% → evidência "CTR crítico"; top performer (CTR > 10% + conv > 0) → `recommended_action`; Ad Strength signal (POOR/AVERAGE → qualidade criativa; GOOD/EXCELLENT → audiência/landing page; UNSPECIFIED → padrões vídeo CTR < 0,5%)
+- **Validado:** 18 ad groups em `ad_group_summary`; SECTION 5 injectada com grupo 'B2B Exata' (drain) e top performers
+
+`commit: [v4.3 commit hash]`
+
+---
+
+## v4.3.1 — Fix Agent Ordering + Drain Threshold Adjustment
+
+**Problema 1:** `.order("date", desc=True)` em `a_data_sync.py` causava erro não-fatal `column campaign_summary.date does not exist` em cada execução do pipeline — bloco `agent_decisions` falhava silenciosamente.  
+**Fix:** `.order("date_range_end", desc=True)` — coluna correcta para obter as campanhas mais recentes.
+
+**Problema 2:** Limiar R$500 na regra de drain do Ad Group Intelligence era alto demais — maior drain activo ('B2B Exata', ~R$200) nunca atingia o threshold; regra nunca disparava.  
+**Fix:** Limiar baixado de R$500 → R$100 em dois pontos do SYSTEM_PROMPT em `narrative/route.ts`.
+
+**Docs:** `changelog.md`, `frontend.md`, `architecture.md` actualizados para v4.3.1.
+
+`commit: feat(v4.3.1): fix agent ordering, adjust drain threshold and update docs`

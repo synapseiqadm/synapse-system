@@ -156,6 +156,7 @@ Workspace resolution: `resolveWorkspace()` → 401 se sem sessão → 200 + JSON
 | SECTION 2 | Derivação on-the-fly | Campanhas com spend > 0 e conversões = 0 (CRITICAL se total > R$500) |
 | SECTION 3 | `fn_campaign_snapshot_delta` | Delta D-1 vs D-8 por métrica, filtro `ABS(delta) > 15%` |
 | SECTION 4 | `data_quality_report` | Findings failed/warning — `[TRACKING]` / `[DATA]` / `[SEMANTIC]` |
+| SECTION 5 | `ad_group_summary` | 3 drains (cost > 0, conv = 0) + 2 top performers (ROAS/CTR) — `[CREATIVE_CONTEXT]` |
 
 **SYSTEM_PROMPT — Framework de diagnóstico:**
 - **P1/P2/P3** — classificação de prioridade com impacto em BRL obrigatório para P1/P2
@@ -163,6 +164,7 @@ Workspace resolution: `resolveWorkspace()` → 401 se sem sessão → 200 + JSON
 - **Causal pattern library** — HIGH-RESOLUTION (CTR/CPC) + BASELINE
 - **`probable_causes[]`** — array estruturado: `layer | confidence | cause | evidence`; tracking sempre primeiro; máx 3 items
 - **`## Financial Forecaster`** — `burn_rate`, `estimated_total_spend`, thresholds `over`/`under`/`on_track`; activo quando `[CONTEXT]` + `budget_total` presentes
+- **`## Ad Group Intelligence — [CREATIVE_CONTEXT]`** — activo quando SECTION 5 presente: drain rule (cost > R$100 → citar nome em `technical_diagnosis` + item obrigatório `suggested_playbooks` effort='low'); CTR < 1% → evidência; top performer (CTR > 10% + conv > 0) → `recommended_action`; Ad Strength signal (POOR/AVERAGE → criativo; GOOD/EXCELLENT → audiência/LP; UNSPECIFIED → padrões vídeo)
 - **`## Playbook Engine — [ACTIONABLE_PLAYBOOKS]`** — MANDATORY quando `pacing_status ∈ {over, under}`: Gemini gera `suggested_playbooks[]` com 2–4 items (`task`, `impact`, `effort`); `on_track` → `[]`; sem `budget_pacing` → campo omitido
 
 **Output JSON:**
