@@ -219,6 +219,22 @@ A Fase 2 fez a plataforma evoluir de pipeline de dados estático para ecossistem
 
 ---
 
+## v4.1 — Burn Rate Predictor & Budget Pacing
+
+**Entregues:**
+- **`computePeriodCtx()`** — deriva `daysElapsed`, `totalDays`, `progressPct` de `campaign_summary.date_range_*` + `new Date()` do servidor; sem hardcode
+- **SECTION 1 — `[CONTEXT]`** injectado: `Today is X. Period: A..B (N days). Progress: D/N days (P%).`
+- **SYSTEM_PROMPT — `## Financial Forecaster`:** diretriz completa com `burn_rate = cost ÷ days_elapsed`, `estimated_total_spend = burn_rate × total_days`, thresholds `over` (+5%) / `under` (-15%) / `on_track`, `days_until_exhaustion = FLOOR((budget − cost) ÷ burn_rate)`
+- **Output JSON** extendido com `budget_pacing?` (opcional — omitido quando sem dados de orçamento)
+- **`BudgetPacingBadge`** em `AINarrativeCard.tsx`: vermelho (`over`) · índigo (`under`) · esmeralda (`on_track`); mostra `estimated_total_spend`, `days_until_exhaustion`, `recommendation`
+- **SELECT** inclui `date_range_start` + `date_range_end` para derivação do período
+- **`vercel.json`:** cron corrigido de `0 */4 * * *` → `0 9 * * *` (Hobby plan — 1×/dia às 9h UTC)
+- **Validado em produção:** badge PACING: ESTOURO · R$3.092,40 projetado · recomendação de redução de lance
+
+`commit: 2716aa9, c73c61e`
+
+---
+
 ## 🏁 Encerramento — Fase 3: Detective & Guardian
 
 **Data:** 2026-05-13 | **Commits:** `db3b8b7` → `156d48d`

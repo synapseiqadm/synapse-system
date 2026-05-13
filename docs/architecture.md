@@ -30,7 +30,7 @@ GitHub (synapseiqadm/synapse-system)
 │       │           └── timeline/route.ts
 │       ├── components/
 │       │   ├── ExecutiveBoardView.tsx   → Painel Executivo (tab Geral)
-│       │   ├── AINarrativeCard.tsx      → Card diagnóstico Gemini + probable_causes UI
+│       │   ├── AINarrativeCard.tsx      → Card diagnóstico Gemini + BudgetPacingBadge + probable_causes UI
 │       │   ├── GrowthIntelligenceView.tsx
 │       │   ├── InsightsView.tsx
 │       │   ├── DataQualityView.tsx

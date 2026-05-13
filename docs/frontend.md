@@ -106,7 +106,7 @@ Nenhum UUID de workspace está duplicado em ficheiros de componente.
 | Componente | Descrição |
 |---|---|
 | `ExecutiveBoardView` | Painel Executivo (tab Geral): Health Strip, Prioridades, Performance Pulse (MomentumChart dual-axis, 4 métricas 2×2, seletor 7/15/30d, marcadores timeline), Domain Health, Timeline Operacional |
-| `AINarrativeCard` | Card de diagnóstico IA: priority_score dots, insight_summary, technical_diagnosis, `probable_causes[]` com badges por camada, recommended_action; badge PREVIEW quando `is_simulated` |
+| `AINarrativeCard` | Card de diagnóstico IA: priority_score dots, insight_summary, technical_diagnosis, `BudgetPacingBadge` (over/under/on_track), `probable_causes[]` com badges por camada, recommended_action; badge PREVIEW quando `is_simulated` |
 | `ConnectorCard` | Card de conector: status badge (synced/pending/error/disconnected), lastSync, rowsLoaded, quality summary, botões sync/connect/disconnect |
 | `GrowthIntelligenceView` | Tab Growth Intelligence: 7 secções (GA4, funil semântico, eventos, paid sessions, governance findings, evidence) via `Promise.allSettled` |
 | `InsightsView` | Tab Insights: deduplicação por `dedupe_key`, group cards para `*_zero_conversions_with_cost`, mutual exclusion semântica, status analista |
@@ -166,14 +166,29 @@ Workspace resolution: `resolveWorkspace()` → 401 se sem sessão → 200 + JSON
 **Output JSON:**
 ```typescript
 {
-  insight_summary:     string;   // pt-BR, max 100 chars
-  technical_diagnosis: string;   // English, 2–3 sentences
-  recommended_action:  string;   // pt-BR, executable
+  insight_summary:     string;
+  technical_diagnosis: string;
+  recommended_action:  string;
   priority_score:      1 | 2 | 3 | 4 | 5;
   probable_causes:     ProbableCause[];
+  budget_pacing?:      BudgetPacing;   // optional — omitido quando sem budget_total
   is_simulated:        false;
 }
+
+// BudgetPacing
+{
+  pacing_status:         "over" | "under" | "on_track";
+  estimated_total_spend: number;               // projeção ao burn_rate actual
+  days_until_exhaustion: number | null;        // null se on_track/under
+  recommendation:        string;               // pt-BR, max 80 chars
+}
 ```
+
+**Forecaster — fórmulas:**
+- `burn_rate = total_cost ÷ days_elapsed`
+- `estimated_total_spend = burn_rate × total_days`
+- `over` se projected > budget × 1.05 · `under` se projected < budget × 0.85
+- `days_until_exhaustion = FLOOR((budget − cost) ÷ burn_rate)` — só em `over`
 
 ---
 
