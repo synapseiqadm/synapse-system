@@ -235,6 +235,21 @@ A Fase 2 fez a plataforma evoluir de pipeline de dados estático para ecossistem
 
 ---
 
+## v4.2 — Playbook Engine: Checklist de Contingência
+
+**Entregues:**
+- **SYSTEM_PROMPT — `## Playbook Engine — [ACTIONABLE_PLAYBOOKS]`:** diretriz MANDATORY — `pacing_status ∈ {over, under}` → Gemini DEVE gerar `suggested_playbooks[]` com 2–4 items; `on_track` → array vazio; sem `budget_pacing` → campo omitido
+- **Schema por item:** `{ task: string (pt-BR, ≤80 chars), impact: string (pt-BR, ≤60 chars), effort: "low" | "medium" | "high" }`
+- **Output JSON** extendido com `suggested_playbooks?` (opcional — omitido quando sem `budget_pacing`)
+- **Tipo `SuggestedPlaybook`** em `route.ts`; normalização defensiva (filtra items sem `task` ou `effort` inválido)
+- **`PlaybookChecklist`** em `AINarrativeCard.tsx`: checkboxes visuais (sem estado), badges de esforço BAIXO/MÉDIO/ALTO (esmeralda/âmbar/vermelho), linha de impacto financeiro; renderiza entre `BudgetPacingBadge` e `probable_causes`
+- **RLS (Task 1):** confirmado já completo via migration 013 — `sync_runs` e `operational_events` já usam padrão `TO authenticated` workspace-scoped; sem migration adicional necessária
+- **Deploy:** auto-deployed via GitHub integration (webhook reposto); produção `READY` em `dpl_AabagCPAnrYvDKCMSU9Wexww3Pxy`
+
+`commit: 7c6f334`
+
+---
+
 ## 🏁 Encerramento — Fase 3: Detective & Guardian
 
 **Data:** 2026-05-13 | **Commits:** `db3b8b7` → `156d48d`

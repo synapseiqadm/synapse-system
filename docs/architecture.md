@@ -1,6 +1,6 @@
 # Arquitectura — SynapseIQ
 
-**Estado actual:** v3.4 (Maio 2026)
+**Estado actual:** v4.2 (Maio 2026)
 
 ---
 

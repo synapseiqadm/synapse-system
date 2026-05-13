@@ -106,7 +106,7 @@ Nenhum UUID de workspace está duplicado em ficheiros de componente.
 | Componente | Descrição |
 |---|---|
 | `ExecutiveBoardView` | Painel Executivo (tab Geral): Health Strip, Prioridades, Performance Pulse (MomentumChart dual-axis, 4 métricas 2×2, seletor 7/15/30d, marcadores timeline), Domain Health, Timeline Operacional |
-| `AINarrativeCard` | Card de diagnóstico IA: priority_score dots, insight_summary, technical_diagnosis, `BudgetPacingBadge` (over/under/on_track), `probable_causes[]` com badges por camada, recommended_action; badge PREVIEW quando `is_simulated` |
+| `AINarrativeCard` | Card de diagnóstico IA: priority_score dots, insight_summary, technical_diagnosis, `BudgetPacingBadge` (over/under/on_track), `PlaybookChecklist` (checklist de contingência quando pacing ≠ on_track), `probable_causes[]` com badges por camada, recommended_action; badge PREVIEW quando `is_simulated` |
 | `ConnectorCard` | Card de conector: status badge (synced/pending/error/disconnected), lastSync, rowsLoaded, quality summary, botões sync/connect/disconnect |
 | `GrowthIntelligenceView` | Tab Growth Intelligence: 7 secções (GA4, funil semântico, eventos, paid sessions, governance findings, evidence) via `Promise.allSettled` |
 | `InsightsView` | Tab Insights: deduplicação por `dedupe_key`, group cards para `*_zero_conversions_with_cost`, mutual exclusion semântica, status analista |
@@ -162,6 +162,8 @@ Workspace resolution: `resolveWorkspace()` → 401 se sem sessão → 200 + JSON
 - **Layer 0 — Tracking Integrity** — avaliado antes de qualquer padrão de performance; falhas `[TRACKING]` elevam para P1
 - **Causal pattern library** — HIGH-RESOLUTION (CTR/CPC) + BASELINE
 - **`probable_causes[]`** — array estruturado: `layer | confidence | cause | evidence`; tracking sempre primeiro; máx 3 items
+- **`## Financial Forecaster`** — `burn_rate`, `estimated_total_spend`, thresholds `over`/`under`/`on_track`; activo quando `[CONTEXT]` + `budget_total` presentes
+- **`## Playbook Engine — [ACTIONABLE_PLAYBOOKS]`** — MANDATORY quando `pacing_status ∈ {over, under}`: Gemini gera `suggested_playbooks[]` com 2–4 items (`task`, `impact`, `effort`); `on_track` → `[]`; sem `budget_pacing` → campo omitido
 
 **Output JSON:**
 ```typescript
@@ -171,7 +173,8 @@ Workspace resolution: `resolveWorkspace()` → 401 se sem sessão → 200 + JSON
   recommended_action:  string;
   priority_score:      1 | 2 | 3 | 4 | 5;
   probable_causes:     ProbableCause[];
-  budget_pacing?:      BudgetPacing;   // optional — omitido quando sem budget_total
+  budget_pacing?:      BudgetPacing;        // optional — omitido quando sem budget_total
+  suggested_playbooks?: SuggestedPlaybook[]; // optional — present quando pacing over/under
   is_simulated:        false;
 }
 
@@ -181,6 +184,13 @@ Workspace resolution: `resolveWorkspace()` → 401 se sem sessão → 200 + JSON
   estimated_total_spend: number;               // projeção ao burn_rate actual
   days_until_exhaustion: number | null;        // null se on_track/under
   recommendation:        string;               // pt-BR, max 80 chars
+}
+
+// SuggestedPlaybook
+{
+  task:   string;   // acção específica pt-BR, max 80 chars
+  impact: string;   // efeito financeiro pt-BR, max 60 chars
+  effort: "low" | "medium" | "high";
 }
 ```
 
