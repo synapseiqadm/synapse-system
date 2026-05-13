@@ -1,10 +1,10 @@
 "use client";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { createClient } from "@/utils/supabase/client";
 import Link from "next/link";
 import {
   LayoutGrid, Radio, Settings,
-  Loader2, Search, Tag, Megaphone, Hash, ChevronRight,
+  Loader2, Search, Tag, Megaphone, Hash, ChevronRight, ChevronDown, Check,
   ShieldCheck, Lightbulb, Building2, Activity, Database, LogOut,
 } from "lucide-react";
 import { GrowthIntelligenceView } from "@/components/GrowthIntelligenceView";
@@ -14,11 +14,20 @@ import { ExecutiveBoardView }     from "@/components/ExecutiveBoardView";
 import { AINarrativeCard }        from "@/components/AINarrativeCard";
 import { DEFAULT_WORKSPACE }      from "@/lib/workspace";
 
+const WORKSPACE_COOKIE = "synapseiq_workspace";
+const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 type NavItem =
   | "geral" | "growth" | "campanhas" | "keywords"
   | "qualidade" | "insights" | "canais" | "configuracoes";
+
+interface Workspace {
+  id:   string;
+  name: string;
+  slug: string;
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -82,12 +91,24 @@ function DashSidebar({
   active,
   onNavigate,
   userEmail,
+  workspaces,
+  activeWorkspaceId,
+  activeWorkspaceName,
+  onSwitchWorkspace,
+  switching,
 }: {
   active: NavItem;
   onNavigate: (n: NavItem) => void;
   userEmail: string;
+  workspaces: Workspace[];
+  activeWorkspaceId: string;
+  activeWorkspaceName: string;
+  onSwitchWorkspace: (ws: Workspace) => void;
+  switching: boolean;
 }) {
+  const [dropdownOpen, setDropdownOpen] = useState(false);
   const inCampanhasGroup = active === "campanhas" || active === "keywords";
+  const isSuperadmin = workspaces.length > 1;
 
   async function handleLogout() {
     const supabase = createClient();
@@ -102,13 +123,45 @@ function DashSidebar({
         <span className="text-sm font-bold text-white tracking-tight">SynapseIQ</span>
       </div>
 
-      {/* Active tenant */}
-      <div className="px-5 py-2.5 border-b border-zinc-800/60 bg-zinc-900/40">
-        <p className="text-[9px] text-zinc-600 uppercase tracking-wider mb-1">Cliente</p>
-        <div className="flex items-center gap-1.5">
-          <Building2 size={11} className="text-indigo-400 flex-shrink-0" />
-          <p className="text-xs font-semibold text-zinc-300 truncate">{DEFAULT_WORKSPACE.name}</p>
-        </div>
+      {/* Active tenant — switcher for superadmin, static badge for regular users */}
+      <div className="px-3 py-2.5 border-b border-zinc-800/60 bg-zinc-900/40">
+        <p className="text-[9px] text-zinc-600 uppercase tracking-wider mb-1 px-2">Cliente</p>
+        {isSuperadmin ? (
+          <div className="relative">
+            <button
+              onClick={() => setDropdownOpen(o => !o)}
+              disabled={switching}
+              className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800/60 transition-colors group"
+            >
+              <div className="flex items-center gap-1.5 min-w-0">
+                <Building2 size={11} className="text-indigo-400 flex-shrink-0" />
+                <p className="text-xs font-semibold text-zinc-300 truncate">
+                  {switching ? "A trocar…" : activeWorkspaceName}
+                </p>
+              </div>
+              <ChevronDown size={11} className={`flex-shrink-0 text-zinc-600 transition-transform ${dropdownOpen ? "rotate-180" : ""}`} />
+            </button>
+            {dropdownOpen && (
+              <div className="absolute left-0 right-0 top-full mt-1 z-50 rounded-lg border border-zinc-700/60 bg-zinc-900 shadow-xl overflow-hidden">
+                {workspaces.map(ws => (
+                  <button
+                    key={ws.id}
+                    onClick={() => { setDropdownOpen(false); onSwitchWorkspace(ws); }}
+                    className="w-full flex items-center justify-between gap-2 px-3 py-2 text-xs text-zinc-300 hover:bg-indigo-600/20 hover:text-indigo-300 transition-colors text-left"
+                  >
+                    <span className="truncate">{ws.name}</span>
+                    {ws.id === activeWorkspaceId && <Check size={11} className="flex-shrink-0 text-indigo-400" />}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="flex items-center gap-1.5 px-2">
+            <Building2 size={11} className="text-indigo-400 flex-shrink-0" />
+            <p className="text-xs font-semibold text-zinc-300 truncate">{activeWorkspaceName}</p>
+          </div>
+        )}
       </div>
 
       <nav className="flex-1 p-3 space-y-0.5">
@@ -506,63 +559,101 @@ const NAV_META: Record<NavItem, { title: string; subtitle: string }> = {
 export default function DashboardPage() {
   const supabase = createClient();
 
-  const [nav, setNav]           = useState<NavItem>("geral");
+  const [nav, setNav]             = useState<NavItem>("geral");
   const [userEmail, setUserEmail] = useState("");
 
+  // Workspace switching (superadmin)
+  const [workspaces, setWorkspaces]             = useState<Workspace[]>([]);
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState(DEFAULT_WORKSPACE.id);
+  const [switching, setSwitching]               = useState(false);
+
+  const activeWorkspaceName =
+    workspaces.find(w => w.id === activeWorkspaceId)?.name ?? DEFAULT_WORKSPACE.name;
+
+  // Campaigns + keywords
   const [campaigns, setCampaigns]               = useState<CampaignRow[]>([]);
   const [campaignsLoading, setCampaignsLoading] = useState(true);
 
   const [keywords, setKeywords]               = useState<KeywordRow[]>([]);
   const [keywordsLoading, setKeywordsLoading] = useState(true);
 
+  // On mount: read active workspace from cookie, then load workspace list
   useEffect(() => {
+    const m = document.cookie.match(new RegExp(`${WORKSPACE_COOKIE}=(${UUID_RE.source})`));
+    if (m?.[1]) setActiveWorkspaceId(m[1]);
+
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (user?.email) setUserEmail(user.email);
     });
+
+    fetch("/api/admin/workspaces")
+      .then(r => r.ok ? r.json() : null)
+      .then((json: { ok: boolean; workspaces?: Workspace[] } | null) => {
+        if (json?.ok && json.workspaces) setWorkspaces(json.workspaces);
+      })
+      .catch(() => {});
   }, []);
 
-  useEffect(() => {
-    async function fetchCampaigns() {
-      setCampaignsLoading(true);
-      const { data } = await supabase
-        .from("campaign_summary")
-        .select("campaign_id, campaign_name, cost, conversions, roas, clicks, ctr, date_range_start, date_range_end")
-        .eq("workspace_id", DEFAULT_WORKSPACE.id)
-        .eq("is_mock", false)
-        .order("date_range_end", { ascending: false })
-        .order("cost",           { ascending: false });
-      // Keep only the most recent snapshot per campaign.
-      const seen = new Set<string>();
-      const deduped = ((data as CampaignRow[]) ?? []).filter(row => {
-        if (seen.has(row.campaign_id)) return false;
-        seen.add(row.campaign_id);
-        return true;
-      });
-      setCampaigns(deduped);
-      setCampaignsLoading(false);
-    }
-    fetchCampaigns();
-  }, []);
+  const fetchCampaigns = useCallback(async (wsId: string) => {
+    setCampaignsLoading(true);
+    const { data } = await supabase
+      .from("campaign_summary")
+      .select("campaign_id, campaign_name, cost, conversions, roas, clicks, ctr, date_range_start, date_range_end")
+      .eq("workspace_id", wsId)
+      .eq("is_mock", false)
+      .order("date_range_end", { ascending: false })
+      .order("cost",           { ascending: false });
+    const seen = new Set<string>();
+    const deduped = ((data as CampaignRow[]) ?? []).filter(row => {
+      if (seen.has(row.campaign_id)) return false;
+      seen.add(row.campaign_id);
+      return true;
+    });
+    setCampaigns(deduped);
+    setCampaignsLoading(false);
+  }, [supabase]);
+
+  const fetchKeywords = useCallback(async (wsId: string) => {
+    setKeywordsLoading(true);
+    const { data } = await supabase
+      .from("keyword_analysis")
+      .select("keyword, campaign_name, match_type, clicks, cost, conversions")
+      .eq("workspace_id", wsId)
+      .order("conversions", { ascending: false });
+    setKeywords((data as KeywordRow[]) ?? []);
+    setKeywordsLoading(false);
+  }, [supabase]);
 
   useEffect(() => {
-    async function fetchKeywords() {
-      setKeywordsLoading(true);
-      const { data } = await supabase
-        .from("keyword_analysis")
-        .select("keyword, campaign_name, match_type, clicks, cost, conversions")
-        .eq("workspace_id", DEFAULT_WORKSPACE.id)
-        .order("conversions", { ascending: false });
-      setKeywords((data as KeywordRow[]) ?? []);
-      setKeywordsLoading(false);
-    }
-    fetchKeywords();
-  }, []);
+    void fetchCampaigns(activeWorkspaceId);
+    void fetchKeywords(activeWorkspaceId);
+  }, [activeWorkspaceId, fetchCampaigns, fetchKeywords]);
+
+  const handleSwitchWorkspace = async (ws: Workspace) => {
+    if (ws.id === activeWorkspaceId || switching) return;
+    setSwitching(true);
+    await fetch("/api/workspaces/switch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workspace_id: ws.id }),
+    });
+    window.location.reload();
+  };
 
   const meta = NAV_META[nav];
 
   return (
     <div className="flex h-screen bg-[#09090b] text-slate-200 overflow-hidden font-sans">
-      <DashSidebar active={nav} onNavigate={setNav} userEmail={userEmail} />
+      <DashSidebar
+        active={nav}
+        onNavigate={setNav}
+        userEmail={userEmail}
+        workspaces={workspaces}
+        activeWorkspaceId={activeWorkspaceId}
+        activeWorkspaceName={activeWorkspaceName}
+        onSwitchWorkspace={handleSwitchWorkspace}
+        switching={switching}
+      />
 
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
@@ -574,7 +665,7 @@ export default function DashboardPage() {
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1.5 bg-indigo-500/10 border border-indigo-500/20 rounded-full px-2.5 py-1">
               <Building2 size={11} className="text-indigo-400" />
-              <span className="text-[11px] font-medium text-indigo-300">{DEFAULT_WORKSPACE.name}</span>
+              <span className="text-[11px] font-medium text-indigo-300">{activeWorkspaceName}</span>
             </div>
             {userEmail && (
               <span className="text-[10px] text-zinc-600 font-mono hidden sm:block truncate max-w-[180px]">
