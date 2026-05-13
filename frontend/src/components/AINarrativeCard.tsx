@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Sparkles, ArrowRight, AlertTriangle, Loader2, WifiOff, ExternalLink } from "lucide-react";
+import { Sparkles, ArrowRight, AlertTriangle, Loader2, WifiOff, ExternalLink, TrendingUp, TrendingDown, Minus } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -12,6 +12,13 @@ interface ProbableCause {
   evidence:   string;
 }
 
+interface BudgetPacingData {
+  pacing_status:         "over" | "under" | "on_track";
+  estimated_total_spend: number;
+  days_until_exhaustion: number | null;
+  recommendation:        string;
+}
+
 interface NarrativeData {
   insight_summary:     string;
   technical_diagnosis: string;
@@ -19,6 +26,7 @@ interface NarrativeData {
   priority_score:      number;
   is_simulated:        boolean;
   probable_causes?:    ProbableCause[];
+  budget_pacing?:      BudgetPacingData;
 }
 
 type FetchState =
@@ -75,6 +83,44 @@ function OfflineCard() {
       <div className="px-5 py-5 flex items-center gap-3 text-zinc-600">
         <WifiOff size={14} className="shrink-0" />
         <span className="text-xs">Inteligência temporariamente offline.</span>
+      </div>
+    </div>
+  );
+}
+
+function BudgetPacingBadge({ pacing }: { pacing: BudgetPacingData }) {
+  const isOver  = pacing.pacing_status === "over";
+  const isUnder = pacing.pacing_status === "under";
+
+  const colors = isOver
+    ? { wrap: "bg-red-500/10 border-red-500/20",   text: "text-red-300",    sub: "text-red-500/70"   }
+    : isUnder
+      ? { wrap: "bg-indigo-500/10 border-indigo-500/20", text: "text-indigo-300", sub: "text-indigo-500/70" }
+      : { wrap: "bg-emerald-500/10 border-emerald-500/20", text: "text-emerald-300", sub: "text-emerald-600" };
+
+  const Icon   = isOver ? TrendingUp : isUnder ? TrendingDown : Minus;
+  const label  = isOver ? "PACING: ESTOURO" : isUnder ? "PACING: SUB-UTILIZAÇÃO" : "PACING: NO RITMO";
+
+  return (
+    <div className={`mx-5 mb-3 flex items-start gap-2.5 rounded-lg border px-3 py-2 ${colors.wrap}`}>
+      <Icon size={12} className={`mt-0.5 shrink-0 ${colors.text}`} />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className={`text-[9px] font-bold tracking-widest uppercase ${colors.text}`}>{label}</span>
+          <span className={`text-[10px] font-mono ${colors.text}`}>
+            R${pacing.estimated_total_spend.toFixed(2)} projetado
+          </span>
+          {pacing.days_until_exhaustion != null && (
+            <span className={`text-[10px] ${colors.sub}`}>
+              · {pacing.days_until_exhaustion}d até esgotar
+            </span>
+          )}
+        </div>
+        {pacing.recommendation && (
+          <p className={`text-[10px] mt-0.5 leading-relaxed ${colors.sub}`}>
+            {pacing.recommendation}
+          </p>
+        )}
       </div>
     </div>
   );
@@ -151,6 +197,11 @@ export function AINarrativeCard() {
           {narrative.technical_diagnosis}
         </p>
       </div>
+
+      {/* Budget pacing */}
+      {narrative.budget_pacing && (
+        <BudgetPacingBadge pacing={narrative.budget_pacing} />
+      )}
 
       {/* Probable causes */}
       {narrative.probable_causes && narrative.probable_causes.length > 0 && (

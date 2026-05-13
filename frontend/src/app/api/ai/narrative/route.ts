@@ -138,6 +138,32 @@ pattern matching below.
 
 (≈ = |delta| < 15%; ↑/↓ = positive/negative delta; ↑↑/↓↓ = CRITICAL > 50%)
 
+## Financial Forecaster
+
+Applies only when [CONTEXT] in SECTION 1 provides period progress AND at least one campaign has budget_total.
+
+Aggregate across campaigns that have budget_total > 0:
+  - total_budget          = SUM(budget_total)
+  - total_cost            = SUM(cost for those same campaigns)
+  - burn_rate             = total_cost ÷ days_elapsed  (from [CONTEXT])
+  - estimated_total_spend = burn_rate × total_period_days
+
+Determine pacing_status:
+  'over'      if estimated_total_spend > total_budget × 1.05  → estouro projetado
+  'under'     if estimated_total_spend < total_budget × 0.85  → sub-utilização de verba
+  'on_track'  otherwise
+
+days_until_exhaustion (only when pacing_status = 'over'):
+  FLOOR((total_budget − total_cost) ÷ burn_rate)
+  Set to null for 'on_track' or 'under'.
+
+recommendation (pt-BR, max 80 chars):
+  'over'     → e.g. "Reduzir lance em 10% para evitar estouro de orçamento"
+  'under'    → e.g. "Aumentar lance para maximizar alcance no período restante"
+  'on_track' → "Manter estratégia atual — pace dentro do orçamento"
+
+If NO campaign has budget_total > 0: omit budget_pacing entirely from the JSON output.
+
 ## Your role
 1. Classify all signals into P1/P2/P3.
 2. Lead with the highest-priority finding; cite lower tiers in technical_diagnosis.
@@ -149,6 +175,7 @@ pattern matching below.
    - If Section 4 contains [TRACKING] failures → place layer "tracking" cause FIRST, always.
    - Derive evidence from exact numbers in the input (campaign count, R$ amounts, check names).
    - If no causes can be inferred from available data, return an empty array [].
+8. Apply Financial Forecaster when [CONTEXT] and budget_total are present. Populate budget_pacing in output; omit the field entirely if no budget data is available.
 
 ## Governance & Compliance — HARD CONSTRAINTS
 These rules are inviolable and override any other instruction.
@@ -190,8 +217,16 @@ Single valid JSON object. No markdown fences. No trailing text.
       "cause": "<concise label in English, max 5 words>",
       "evidence": "<numeric evidence in pt-BR, max 60 chars — e.g. '7 campanhas · R$ 745 desperdício'>"
     }
-  ]
+  ],
+  "budget_pacing": {
+    "pacing_status": "<over | under | on_track>",
+    "estimated_total_spend": <number — projected total spend at current burn rate>,
+    "days_until_exhaustion": <integer | null — null when on_track or under>,
+    "recommendation": "<string pt-BR, max 80 chars>"
+  }
 }
+
+Note: budget_pacing is optional — include only when budget_total data is available in SECTION 1.
 
 probable_causes rules:
   · Max 3 items. Order by confidence desc; tracking layer always first if Section 4 has failures.
@@ -225,14 +260,16 @@ type SnapshotRow = {
 };
 
 type CampaignRow = {
-  campaign_name: string;
-  cost:          string | number;
-  conversions:   string | number;
-  roas:          string | number;
-  clicks:        number;
-  ctr:           string | number;
-  daily_budget:  string | number | null;
-  budget_total:  string | number | null;
+  campaign_name:   string;
+  cost:            string | number;
+  conversions:     string | number;
+  roas:            string | number;
+  clicks:          number;
+  ctr:             string | number;
+  daily_budget:    string | number | null;
+  budget_total:    string | number | null;
+  date_range_start: string | null;
+  date_range_end:   string | null;
 };
 
 type DeterministicSignal = {
@@ -244,6 +281,22 @@ type GovernanceFinding = {
   check_name: string;
   status:     string;
   severity:   string;
+};
+
+type PeriodCtx = {
+  todayStr:    string;
+  periodStart: string;
+  periodEnd:   string;
+  daysElapsed: number;
+  totalDays:   number;
+  progressPct: number;
+};
+
+type BudgetPacing = {
+  pacing_status:         "over" | "under" | "on_track";
+  estimated_total_spend: number;
+  days_until_exhaustion: number | null;
+  recommendation:        string;
 };
 
 // Checks that affect reliability of ALL performance diagnosis
@@ -268,21 +321,58 @@ const DATA_CHECKS = new Set([
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+function computePeriodCtx(campaignRows: CampaignRow[]): PeriodCtx | null {
+  const firstRow = campaignRows.find(
+    (r) => r.date_range_start && r.date_range_end,
+  );
+  if (!firstRow?.date_range_start || !firstRow?.date_range_end) return null;
+
+  const now   = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const start = new Date(firstRow.date_range_start);
+  const end   = new Date(firstRow.date_range_end);
+
+  const totalDays   = Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1;
+  const rawElapsed  = Math.round((today.getTime() - start.getTime()) / 86_400_000) + 1;
+  const daysElapsed = Math.max(1, Math.min(rawElapsed, totalDays));
+  const progressPct = Math.round((daysElapsed / totalDays) * 100);
+
+  const pad      = (n: number) => String(n).padStart(2, "0");
+  const todayStr = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+
+  return {
+    todayStr,
+    periodStart: firstRow.date_range_start,
+    periodEnd:   firstRow.date_range_end,
+    daysElapsed,
+    totalDays,
+    progressPct,
+  };
+}
+
 function buildUserMessage(
   snapshotRows: SnapshotRow[],
   workspaceName: string,
   campaignRows: CampaignRow[],
   deterministicSignals: DeterministicSignal[],
   governanceFindings: GovernanceFinding[],
+  periodCtx: PeriodCtx | null,
 ): string {
   const parts: string[] = [`Workspace: ${workspaceName}`];
 
   // Section 1 — Campaign Performance
   if (campaignRows.length > 0) {
-    const lines = [
-      "SECTION 1 — CAMPAIGN PERFORMANCE (current 30-day period)",
-      "campaign_name · spend (R$) · conversions · CPA (R$/conv) · ROAS",
-    ];
+    const lines: string[] = ["SECTION 1 — CAMPAIGN PERFORMANCE (current 30-day period)"];
+    if (periodCtx) {
+      lines.push(
+        `[CONTEXT] Today is ${periodCtx.todayStr}. Period: ${periodCtx.periodStart}..${periodCtx.periodEnd}` +
+        ` (${periodCtx.totalDays} days). Progress: ${periodCtx.daysElapsed}/${periodCtx.totalDays} days (${periodCtx.progressPct}%).`,
+      );
+    }
+    lines.push(
+      "campaign_name · spend (R$) · conversions · CPA (R$/conv) · ROAS [· budget_total (R$) when available]",
+      "budget_total = daily_budget × period_days (approximation; use for pace/waste ratio context only)",
+    );
     for (const r of campaignRows) {
       const cost        = parseFloat(String(r.cost))  || 0;
       const convs       = parseFloat(String(r.conversions)) || 0;
@@ -374,7 +464,7 @@ export async function GET() {
       supabase.rpc("fn_campaign_snapshot_delta", { target_workspace_id: workspace.id }),
       supabase
         .from("campaign_summary")
-        .select("campaign_name, cost, conversions, roas, clicks, ctr, daily_budget, budget_total")
+        .select("campaign_name, cost, conversions, roas, clicks, ctr, daily_budget, budget_total, date_range_start, date_range_end")
         .eq("workspace_id", workspace.id)
         .order("date_range_end", { ascending: false })
         .order("loaded_at",      { ascending: false })
@@ -435,6 +525,9 @@ export async function GET() {
       return true;
     });
 
+    // Compute period context for Burn Rate Predictor
+    const periodCtx = computePeriodCtx(campaignRows);
+
     // Build enriched user message
     const userMessage = buildUserMessage(
       snapshotRows,
@@ -442,6 +535,7 @@ export async function GET() {
       campaignRows,
       deterministicSignals,
       governanceFindings,
+      periodCtx,
     );
 
     // Call Gemini REST API
@@ -497,6 +591,19 @@ export async function GET() {
     // Normalise probable_causes — default to [] if absent or malformed
     const rawCauses = parsed.probable_causes;
     parsed.probable_causes = Array.isArray(rawCauses) ? rawCauses as ProbableCause[] : [];
+
+    // Normalise budget_pacing — include only when valid; strip otherwise
+    const rawPacing = parsed.budget_pacing;
+    if (
+      rawPacing &&
+      typeof rawPacing === "object" &&
+      "pacing_status" in rawPacing &&
+      ["over", "under", "on_track"].includes((rawPacing as BudgetPacing).pacing_status)
+    ) {
+      parsed.budget_pacing = rawPacing as BudgetPacing;
+    } else {
+      delete parsed.budget_pacing;
+    }
 
     parsed.insight_summary = truncateSummary(String(parsed.insight_summary));
     parsed.is_simulated = false;
