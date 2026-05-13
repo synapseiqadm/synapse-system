@@ -1,6 +1,6 @@
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from google.cloud import bigquery
 from supabase import Client
 
@@ -51,16 +51,19 @@ def sync_campaigns(
             SUM(s.metrics_conversions)                   AS conv,
             SUM(s.metrics_conversions_value)             AS conv_value,
             SUM(s.metrics_clicks)                        AS clicks,
-            SUM(s.metrics_impressions)                   AS impressions
+            SUM(s.metrics_impressions)                   AS impressions,
+            c.daily_budget
         FROM `{GCP_PROJECT_ID}.{GOOGLE_ADS_DATASET}.{STATS_TABLE}` s
         JOIN (
-            SELECT DISTINCT campaign_id, campaign_name
+            SELECT campaign_id, campaign_name,
+                   MAX(campaign_budget_amount_micros) / 1000000 AS daily_budget
             FROM `{GCP_PROJECT_ID}.{GOOGLE_ADS_DATASET}.{CAMPAIGN_TABLE}`
+            GROUP BY campaign_id, campaign_name
         ) c
           ON CAST(REGEXP_EXTRACT(s.campaign_base_campaign, r'/campaigns/(\\d+)') AS INT64)
              = c.campaign_id
         WHERE s.segments_date BETWEEN '{DATE_RANGE_START}' AND '{DATE_RANGE_END}'
-        GROUP BY c.campaign_id, c.campaign_name
+        GROUP BY c.campaign_id, c.campaign_name, c.daily_budget
         HAVING cost > 0
         ORDER BY cost DESC
     """
@@ -74,6 +77,11 @@ def sync_campaigns(
         print("[sync_campaigns] no rows with cost > 0 — skipping upsert", flush=True)
         return 0
 
+    period_days = (
+        date.fromisoformat(str(DATE_RANGE_END)) -
+        date.fromisoformat(str(DATE_RANGE_START))
+    ).days + 1
+
     now = datetime.now(timezone.utc).isoformat()
     records = []
     for row in results:
@@ -83,6 +91,11 @@ def sync_campaigns(
         clicks      = int(row.clicks)       if row.clicks      else 0
         impressions = int(row.impressions)  if row.impressions else 0
         ctr         = round(clicks / impressions, 6) if impressions > 0 else 0.0
+        try:
+            daily_budget = float(row.daily_budget) if row.daily_budget is not None else None
+        except Exception:
+            daily_budget = None
+        budget_total = round(daily_budget * period_days, 2) if daily_budget is not None else None
         records.append({
             "workspace_id":     WOKE_WORKSPACE_ID,
             "campaign_id":      str(row.campaign_id),
@@ -93,6 +106,8 @@ def sync_campaigns(
             "clicks":           clicks,
             "impressions":      impressions,
             "ctr":              ctr,
+            "daily_budget":     daily_budget,
+            "budget_total":     budget_total,
             "data_source":      "google_ads",
             "source_platform":  "google_ads",
             "is_mock":          False,

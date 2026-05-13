@@ -70,7 +70,8 @@ For EVERY P1 or P2 finding, include a BRL estimate inside technical_diagnosis:
 The user message contains up to four sections:
 
   SECTION 1 — CAMPAIGN PERFORMANCE (current 30-day period, always present)
-    campaign_name · spend (R$) · conversions · CPA (R$/conv) · ROAS
+    campaign_name · spend (R$) · conversions · CPA (R$/conv) · ROAS [· budget_total (R$) when available]
+    budget_total = daily_budget × period_days (approximation; use for pace/waste ratio context only)
 
   SECTION 2 — DETERMINISTIC SIGNALS (rule-based engine, always reliable)
     Pre-detected anomalies with severity and financial context already quantified.
@@ -230,6 +231,8 @@ type CampaignRow = {
   roas:          string | number;
   clicks:        number;
   ctr:           string | number;
+  daily_budget:  string | number | null;
+  budget_total:  string | number | null;
 };
 
 type DeterministicSignal = {
@@ -281,11 +284,18 @@ function buildUserMessage(
       "campaign_name · spend (R$) · conversions · CPA (R$/conv) · ROAS",
     ];
     for (const r of campaignRows) {
-      const cost  = parseFloat(String(r.cost))  || 0;
-      const convs = parseFloat(String(r.conversions)) || 0;
-      const cpa   = convs > 0 ? `R$${(cost / convs).toFixed(2)}` : "N/A";
-      const roas  = parseFloat(String(r.roas))  || 0;
-      lines.push(`  ${r.campaign_name} · R$${cost.toFixed(2)} · ${Math.round(convs)} · ${cpa} · ${roas.toFixed(2)}`);
+      const cost        = parseFloat(String(r.cost))  || 0;
+      const convs       = parseFloat(String(r.conversions)) || 0;
+      const cpa         = convs > 0 ? `R$${(cost / convs).toFixed(2)}` : "N/A";
+      const roas        = parseFloat(String(r.roas))  || 0;
+      const budgetTotal = r.budget_total != null ? parseFloat(String(r.budget_total)) : null;
+      const dailyBudget = r.daily_budget != null ? parseFloat(String(r.daily_budget)) : null;
+      const budgetStr   = budgetTotal != null
+        ? ` · budget_total R$${budgetTotal.toFixed(2)}`
+        : dailyBudget != null
+          ? ` · daily_budget R$${dailyBudget.toFixed(2)}/day`
+          : "";
+      lines.push(`  ${r.campaign_name} · R$${cost.toFixed(2)} · ${Math.round(convs)} · ${cpa} · ${roas.toFixed(2)}${budgetStr}`);
     }
     parts.push(lines.join("\n"));
   }
@@ -364,7 +374,7 @@ export async function GET() {
       supabase.rpc("fn_campaign_snapshot_delta", { target_workspace_id: workspace.id }),
       supabase
         .from("campaign_summary")
-        .select("campaign_name, cost, conversions, roas, clicks, ctr")
+        .select("campaign_name, cost, conversions, roas, clicks, ctr, daily_budget, budget_total")
         .eq("workspace_id", workspace.id)
         .order("date_range_end", { ascending: false })
         .order("loaded_at",      { ascending: false })
@@ -434,14 +444,6 @@ export async function GET() {
       governanceFindings,
     );
 
-    // ── DEBUG: payload inspection (remove after v3.2 validation) ────────────
-    console.log("=== DEBUG: GEMINI FULL PROMPT START ===");
-    console.log(userMessage);
-    console.log("=== DEBUG: GEMINI FULL PROMPT END ===");
-    console.log("[narrative] gov_findings_count:", governanceFindings.length);
-    console.log("[narrative] gov_findings:", JSON.stringify(governanceFindings));
-    // ─────────────────────────────────────────────────────────────────────────
-
     // Call Gemini REST API
     const geminiRes = await fetch(`${GEMINI_URL}?key=${GEMINI_API_KEY}`, {
       method: "POST",
@@ -495,11 +497,6 @@ export async function GET() {
     // Normalise probable_causes — default to [] if absent or malformed
     const rawCauses = parsed.probable_causes;
     parsed.probable_causes = Array.isArray(rawCauses) ? rawCauses as ProbableCause[] : [];
-
-    // ── DEBUG: v3.5 cause validation (remove after validation sprint) ─────────
-    console.log("[narrative] probable_causes count:", (parsed.probable_causes as ProbableCause[]).length);
-    console.log("[narrative] probable_causes:", JSON.stringify(parsed.probable_causes));
-    // ─────────────────────────────────────────────────────────────────────────
 
     parsed.insight_summary = truncateSummary(String(parsed.insight_summary));
     parsed.is_simulated = false;
