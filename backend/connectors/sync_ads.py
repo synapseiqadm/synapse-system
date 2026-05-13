@@ -136,6 +136,131 @@ def sync_campaigns(
     return len(records)
 
 
+def sync_ad_groups(
+    bq_client: bigquery.Client,
+    supabase: Client,
+    dry_run: bool = False,
+) -> int:
+    STATS_TABLE    = f"p_ads_AdGroupBasicStats_{GOOGLE_ADS_CUSTOMER_ID}"
+    ADGROUP_TABLE  = f"p_ads_AdGroup_{GOOGLE_ADS_CUSTOMER_ID}"
+    AD_TABLE       = f"p_ads_Ad_{GOOGLE_ADS_CUSTOMER_ID}"
+    CAMPAIGN_TABLE = f"p_ads_Campaign_{GOOGLE_ADS_CUSTOMER_ID}"
+
+    QUERY = f"""
+        WITH strength_by_group AS (
+            SELECT
+                ad_group_id,
+                CASE MIN(CASE ad_group_ad_ad_strength
+                    WHEN 'POOR'      THEN 0
+                    WHEN 'AVERAGE'   THEN 1
+                    WHEN 'GOOD'      THEN 2
+                    WHEN 'EXCELLENT' THEN 3
+                    ELSE 4 END)
+                WHEN 0 THEN 'POOR'
+                WHEN 1 THEN 'AVERAGE'
+                WHEN 2 THEN 'GOOD'
+                WHEN 3 THEN 'EXCELLENT'
+                ELSE 'UNSPECIFIED' END AS worst_strength
+            FROM `{GCP_PROJECT_ID}.{GOOGLE_ADS_DATASET}.{AD_TABLE}`
+            WHERE ad_group_ad_status = 'ENABLED'
+            GROUP BY ad_group_id
+        )
+        SELECT
+            ag.ad_group_id,
+            ag.ad_group_name,
+            c.campaign_id,
+            c.campaign_name,
+            SUM(s.metrics_cost_micros) / 1000000 AS cost,
+            SUM(s.metrics_clicks)                AS clicks,
+            SUM(s.metrics_impressions)           AS impressions,
+            SUM(s.metrics_conversions)           AS conversions,
+            SUM(s.metrics_conversions_value)     AS conv_value,
+            str.worst_strength
+        FROM `{GCP_PROJECT_ID}.{GOOGLE_ADS_DATASET}.{STATS_TABLE}` s
+        JOIN (
+            SELECT DISTINCT ad_group_id, ad_group_name
+            FROM `{GCP_PROJECT_ID}.{GOOGLE_ADS_DATASET}.{ADGROUP_TABLE}`
+        ) ag USING (ad_group_id)
+        JOIN (
+            SELECT DISTINCT campaign_id, campaign_name
+            FROM `{GCP_PROJECT_ID}.{GOOGLE_ADS_DATASET}.{CAMPAIGN_TABLE}`
+        ) c ON s.campaign_id = c.campaign_id
+        LEFT JOIN strength_by_group str USING (ad_group_id)
+        WHERE s.segments_date BETWEEN '{DATE_RANGE_START}' AND '{DATE_RANGE_END}'
+        GROUP BY
+            ag.ad_group_id, ag.ad_group_name,
+            c.campaign_id, c.campaign_name,
+            str.worst_strength
+        HAVING SUM(s.metrics_cost_micros) / 1000000 > 0
+        ORDER BY cost DESC
+    """
+
+    print(f"[sync_ad_groups] source={STATS_TABLE} period={DATE_RANGE_START}..{DATE_RANGE_END}", flush=True)
+
+    results = list(bq_client.query(QUERY).result())
+    print(f"[sync_ad_groups] {len(results)} rows from BigQuery", flush=True)
+
+    if not results:
+        print("[sync_ad_groups] no rows — skipping upsert", flush=True)
+        return 0
+
+    # Deduplicate by ad_group_id — keep highest-cost row (export can produce duplicates
+    # when the same ad_group_id appears under multiple campaign_id values in the snapshot)
+    seen_groups: set[str] = set()
+    deduped = []
+    for row in sorted(results, key=lambda r: float(r.cost) if r.cost else 0.0, reverse=True):
+        if str(row.ad_group_id) not in seen_groups:
+            seen_groups.add(str(row.ad_group_id))
+            deduped.append(row)
+    results = deduped
+    print(f"[sync_ad_groups] {len(results)} unique ad groups after dedup", flush=True)
+
+    now = datetime.now(timezone.utc).isoformat()
+    records = []
+    for row in results:
+        cost        = float(row.cost)       if row.cost       else 0.0
+        conv_value  = float(row.conv_value) if row.conv_value else 0.0
+        clicks      = int(row.clicks)       if row.clicks     else 0
+        impressions = int(row.impressions)  if row.impressions else 0
+        conversions = float(row.conversions) if row.conversions else 0.0
+        roas        = round(conv_value / cost, 2) if cost > 0 else 0.0
+        ctr         = round(clicks / impressions, 6) if impressions > 0 else 0.0
+        records.append({
+            "workspace_id":     WOKE_WORKSPACE_ID,
+            "ad_group_id":      str(row.ad_group_id),
+            "ad_group_name":    row.ad_group_name,
+            "campaign_id":      str(row.campaign_id),
+            "campaign_name":    row.campaign_name,
+            "cost":             round(cost, 2),
+            "clicks":           clicks,
+            "impressions":      impressions,
+            "ctr":              ctr,
+            "conversions":      conversions,
+            "roas":             roas,
+            "ad_strength":      row.worst_strength or "UNSPECIFIED",
+            "date_range_start": str(DATE_RANGE_START),
+            "date_range_end":   str(DATE_RANGE_END),
+            "loaded_at":        now,
+        })
+
+    if dry_run:
+        print(f"[sync_ad_groups] --dry-run: would upsert {len(records)} records", flush=True)
+        for r in records[:5]:
+            print(
+                f"  {r['ad_group_name']}: cost=R${r['cost']} ctr={r['ctr']*100:.2f}% "
+                f"conv={r['conversions']} strength={r['ad_strength']}",
+                flush=True,
+            )
+        return len(records)
+
+    supabase.table("ad_group_summary").upsert(
+        records,
+        on_conflict="workspace_id,ad_group_id,date_range_start,date_range_end",
+    ).execute()
+    print(f"[sync_ad_groups] upserted {len(records)} records", flush=True)
+    return len(records)
+
+
 def sync_keywords(
     bq_client: bigquery.Client,
     supabase: Client,

@@ -164,6 +164,32 @@ recommendation (pt-BR, max 80 chars):
 
 If NO campaign has budget_total > 0: omit budget_pacing entirely from the JSON output.
 
+## Ad Group Intelligence — [CREATIVE_CONTEXT]
+
+Applies ONLY when SECTION 5 is present in the user message.
+
+Use SECTION 5 to enrich diagnosis and Playbooks with specific Ad Group names.
+
+Drain rule — MANDATORY when SECTION 5 contains drain groups:
+  · Drain group = cost > R$0, conversions = 0
+  · If a drain group has cost > R$500 → name it explicitly in technical_diagnosis
+  · If a drain group has cost > R$500 → the suggested_playbook task MUST cite its name:
+      effort = 'low'  (pausing is a single click)
+      task:   "Pausar grupo '<name>' — CTR X%, R$Y sem retorno"
+      impact: "Economia de R$Y no período restante"
+  · If CTR < 1.0% → add in evidence: "CTR crítico de X% — fadiga criativa ou segmentação inadequada"
+
+Top performer rule:
+  · If a top group has CTR > 10% AND conversions > 0 → cite in recommended_action:
+      "Aumentar verba do grupo '<name>' — CTR X% com retorno comprovado (sujeito à aprovação do gestor)"
+
+Ad Strength signal:
+  POOR / AVERAGE   → creative quality issue — elevate confidence of creative diagnosis
+  GOOD / EXCELLENT → creative is not the bottleneck; look at audience or landing page
+  UNSPECIFIED      → video/display ad — apply video-specific patterns (CTR benchmark < 0.5%)
+
+If SECTION 5 is absent: skip all ad-group-specific rules; base diagnosis on Sections 1–4 only.
+
 ## Playbook Engine — [ACTIONABLE_PLAYBOOKS]
 
 Applies ONLY when budget_pacing is being generated (i.e. [CONTEXT] + budget_total are present).
@@ -194,6 +220,7 @@ If budget_pacing is omitted from output (no budget_total): omit suggested_playbo
 8. Apply Financial Forecaster when [CONTEXT] and budget_total are present. Populate budget_pacing in output; omit the field entirely if no budget data is available.
 9. When pacing_status is 'over' or 'under', populate suggested_playbooks[] with 2–4 actionable tasks.
    When pacing is 'on_track' or budget_pacing is omitted, set suggested_playbooks to [].
+10. When SECTION 5 is present, apply Ad Group Intelligence rules: name drain groups in diagnosis and Playbooks.
 
 ## Governance & Compliance — HARD CONSTRAINTS
 These rules are inviolable and override any other instruction.
@@ -332,6 +359,19 @@ type SuggestedPlaybook = {
   effort: "low" | "medium" | "high";
 };
 
+type AdGroupRow = {
+  ad_group_id:   string;
+  ad_group_name: string;
+  campaign_name: string;
+  cost:          string | number;
+  clicks:        number;
+  impressions:   number;
+  ctr:           string | number;
+  conversions:   string | number;
+  roas:          string | number;
+  ad_strength:   string | null;
+};
+
 // Checks that affect reliability of ALL performance diagnosis
 const TRACKING_CHECKS = new Set([
   "ga4_dataset_available",
@@ -390,6 +430,7 @@ function buildUserMessage(
   deterministicSignals: DeterministicSignal[],
   governanceFindings: GovernanceFinding[],
   periodCtx: PeriodCtx | null,
+  adGroupRows: AdGroupRow[],
 ): string {
   const parts: string[] = [`Workspace: ${workspaceName}`];
 
@@ -461,6 +502,52 @@ function buildUserMessage(
     parts.push("SECTION 4 — GOVERNANCE SIGNALS\n(clean — no tracking or data integrity issues detected)");
   }
 
+  // Section 5 — Ad Group Intelligence
+  if (adGroupRows.length > 0) {
+    const drains = adGroupRows
+      .filter((r) => parseFloat(String(r.conversions)) === 0 && parseFloat(String(r.cost)) > 0)
+      .sort((a, b) => parseFloat(String(b.cost)) - parseFloat(String(a.cost)))
+      .slice(0, 3);
+
+    const tops = adGroupRows
+      .filter((r) => parseFloat(String(r.conversions)) > 0)
+      .sort((a, b) => parseFloat(String(b.roas)) - parseFloat(String(a.roas)))
+      .slice(0, 2);
+
+    const lines = [
+      "SECTION 5 — AD GROUP INTELLIGENCE [CREATIVE_CONTEXT]",
+      "Use ad group names to enrich diagnosis and Playbooks per Ad Group Intelligence rules.",
+    ];
+
+    if (drains.length > 0) {
+      lines.push("Drain groups (cost > R$0, zero conversions — evaluate for pause):");
+      for (const r of drains) {
+        const cost = parseFloat(String(r.cost));
+        const ctr  = parseFloat(String(r.ctr)) * 100;
+        lines.push(
+          `  Ad Group '${r.ad_group_name}' [campaign: ${r.campaign_name}]: ` +
+          `Cost R$${cost.toFixed(2)}, CTR ${ctr.toFixed(2)}%, Conv 0, Strength: ${r.ad_strength ?? "UNSPECIFIED"}`,
+        );
+      }
+    }
+
+    if (tops.length > 0) {
+      lines.push("Top performers (highest ROAS, conversions > 0 — scale candidates):");
+      for (const r of tops) {
+        const cost = parseFloat(String(r.cost));
+        const ctr  = parseFloat(String(r.ctr)) * 100;
+        const conv = parseFloat(String(r.conversions));
+        const roas = parseFloat(String(r.roas));
+        lines.push(
+          `  Ad Group '${r.ad_group_name}' [campaign: ${r.campaign_name}]: ` +
+          `Cost R$${cost.toFixed(2)}, CTR ${ctr.toFixed(2)}%, Conv ${Math.round(conv)}, ROAS ${roas.toFixed(2)}, Strength: ${r.ad_strength ?? "UNSPECIFIED"}`,
+        );
+      }
+    }
+
+    parts.push(lines.join("\n"));
+  }
+
   parts.push("Generate the diagnostic JSON.");
   return parts.join("\n\n");
 }
@@ -492,8 +579,8 @@ export async function GET() {
       );
     }
 
-    // Fetch snapshot delta, campaign summary, and governance findings in parallel
-    const [snapshotResult, campaignResult, governanceResult] = await Promise.all([
+    // Fetch snapshot delta, campaign summary, governance findings, and ad groups in parallel
+    const [snapshotResult, campaignResult, governanceResult, adGroupResult] = await Promise.all([
       supabase.rpc("fn_campaign_snapshot_delta", { target_workspace_id: workspace.id }),
       supabase
         .from("campaign_summary")
@@ -509,6 +596,12 @@ export async function GET() {
         .in("status", ["failed", "warning"])
         .order("checked_at", { ascending: false })
         .limit(60),
+      supabase
+        .from("ad_group_summary")
+        .select("ad_group_id, ad_group_name, campaign_name, cost, clicks, impressions, ctr, conversions, roas, ad_strength")
+        .eq("workspace_id", workspace.id)
+        .order("loaded_at", { ascending: false })
+        .limit(100),
     ]);
 
     if (snapshotResult.error) {
@@ -558,6 +651,16 @@ export async function GET() {
       return true;
     });
 
+    // Deduplicate ad group rows — keep most recent per ad_group_id
+    const seenGroups = new Set<string>();
+    const adGroupRows: AdGroupRow[] = [];
+    for (const row of adGroupResult.data ?? []) {
+      if (!seenGroups.has(row.ad_group_id)) {
+        seenGroups.add(row.ad_group_id);
+        adGroupRows.push(row as AdGroupRow);
+      }
+    }
+
     // Compute period context for Burn Rate Predictor
     const periodCtx = computePeriodCtx(campaignRows);
 
@@ -569,6 +672,7 @@ export async function GET() {
       deterministicSignals,
       governanceFindings,
       periodCtx,
+      adGroupRows,
     );
 
     // Call Gemini REST API

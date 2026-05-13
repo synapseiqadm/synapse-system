@@ -25,7 +25,7 @@ from config import (
     ENABLE_INSIGHTS, MEASUREMENT_CONFIG_PATH,
 )
 from sync_runs import start_sync_run, finish_sync_run_success, finish_sync_run_error
-from sync_ads import sync_campaigns, sync_keywords, sync_kpi_cache_daily
+from sync_ads import sync_campaigns, sync_ad_groups, sync_keywords, sync_kpi_cache_daily
 from sync_ga4 import (
     sync_ga4_first_light,
     get_ga4_tables,
@@ -96,6 +96,48 @@ def main(dry_run: bool = False) -> None:
         print(f"[sync_campaigns] ERROR: {exc}", flush=True)
         if run_id:
             finish_sync_run_error(supabase, run_id, str(exc))
+        sys.exit(1)
+
+    # ── ad groups ──────────────────────────────────────────────────────────────
+    ag_run_id = None
+    if not dry_run:
+        ag_run_id = start_sync_run(
+            supabase,
+            workspace_id     = WOKE_WORKSPACE_ID,
+            source_platform  = "google_ads",
+            data_source      = "ad_group_summary",
+            is_mock          = False,
+            date_range_start = DATE_RANGE_START,
+            date_range_end   = DATE_RANGE_END,
+        )
+    try:
+        n_ad_groups = sync_ad_groups(bq_client, supabase, dry_run=dry_run)
+        if ag_run_id:
+            finish_sync_run_success(supabase, ag_run_id, n_ad_groups)
+        record_operational_event(
+            supabase,
+            event_type="system_change",
+            category="sync_success",
+            title="Sync Google Ads Ad Groups successful",
+            description=f"{n_ad_groups} ad groups loaded.",
+            impact_scope={**_scope_base, "source_platform": "google_ads", "data_source": "ad_group_summary", "status": "success", "rows_loaded": n_ad_groups},
+            actor="system",
+            dry_run=dry_run,
+        )
+    except Exception as exc:
+        record_operational_event(
+            supabase,
+            event_type="system_change",
+            category="sync_error",
+            title="Sync Google Ads Ad Groups failed",
+            description=str(exc),
+            impact_scope={**_scope_base, "source_platform": "google_ads", "data_source": "ad_group_summary", "status": "error"},
+            actor="system",
+            dry_run=dry_run,
+        )
+        print(f"[sync_ad_groups] ERROR: {exc}", flush=True)
+        if ag_run_id:
+            finish_sync_run_error(supabase, ag_run_id, str(exc))
         sys.exit(1)
 
     # ── kpi_cache_daily ────────────────────────────────────────────────────
@@ -327,7 +369,7 @@ def main(dry_run: bool = False) -> None:
         print(f"[agent_decisions] ERROR (non-fatal): {exc}", flush=True)
 
     print(
-        f"[a_data_sync] done - campaigns={n_campaigns} kpi={n_kpi} keywords={n_keywords}",
+        f"[a_data_sync] done - campaigns={n_campaigns} ad_groups={n_ad_groups} kpi={n_kpi} keywords={n_keywords}",
         flush=True,
     )
 
