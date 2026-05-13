@@ -27,7 +27,7 @@
 | `/login` | Static | Auth email/password via Supabase |
 | `/dashboard` | Client Component | Painel principal — ExecutiveBoardView + tabs |
 | `/agents` | Client Component | Centro de Operações — feed de decisões live + approve/reject |
-| `/connectors` | Static (scaffolding) | Central de Conectores |
+| `/connectors` | Client Component | Central de Conectores — status live Google Ads + GA4 + tracking integrity banner |
 | `/logs` | Client Component | Status do Sync — sync_runs live, cards de saúde |
 
 ---
@@ -36,9 +36,11 @@
 
 | Rota | Método | Descrição |
 |---|---|---|
-| `/api/ai/narrative` | GET | Diagnóstico Gemini 2.5 Flash — snapshot delta + campaign data |
-| `/api/agents/decisions` | GET | Lê `agent_decisions`; fallback on-the-fly de `campaign_summary` |
+| `/api/ai/narrative` | GET | Diagnóstico Gemini 2.5 Flash — snapshot delta + campaign data + governance (SECTION 4) + `probable_causes[]` |
+| `/api/agents/decisions` | GET | Lê `agent_decisions`; fallback on-the-fly de `campaign_summary`; inclui `probableCauses` determinísticos |
 | `/api/agents/action` | PATCH | Persiste `approved`/`rejected` em `agent_decisions` por `dbId` |
+| `/api/connectors/status` | GET | Status live de Google Ads + GA4 via `sync_runs`; tracking issues de `data_quality_report` |
+| `/api/cron/guardian` | GET | Vercel Cron — alertas P1 via Resend; auth: `Authorization: Bearer <CRON_SECRET>` |
 | `/api/workspaces/[id]/growth/overview` | GET | GA4 + campaign + quality + insights |
 | `/api/workspaces/[id]/growth/funnel` | GET | `ga4_first_light_summary` |
 | `/api/workspaces/[id]/growth/events` | GET | `ga4_first_light_summary` |
@@ -104,7 +106,8 @@ Nenhum UUID de workspace está duplicado em ficheiros de componente.
 | Componente | Descrição |
 |---|---|
 | `ExecutiveBoardView` | Painel Executivo (tab Geral): Health Strip, Prioridades, Performance Pulse (MomentumChart dual-axis, 4 métricas 2×2, seletor 7/15/30d, marcadores timeline), Domain Health, Timeline Operacional |
-| `AINarrativeCard` | Card de diagnóstico IA: priority_score dots, insight_summary, technical_diagnosis, recommended_action; badge PREVIEW quando `is_simulated` |
+| `AINarrativeCard` | Card de diagnóstico IA: priority_score dots, insight_summary, technical_diagnosis, `probable_causes[]` com badges por camada, recommended_action; badge PREVIEW quando `is_simulated` |
+| `ConnectorCard` | Card de conector: status badge (synced/pending/error/disconnected), lastSync, rowsLoaded, quality summary, botões sync/connect/disconnect |
 | `GrowthIntelligenceView` | Tab Growth Intelligence: 7 secções (GA4, funil semântico, eventos, paid sessions, governance findings, evidence) via `Promise.allSettled` |
 | `InsightsView` | Tab Insights: deduplicação por `dedupe_key`, group cards para `*_zero_conversions_with_cost`, mutual exclusion semântica, status analista |
 | `DataQualityView` | Tab Qualidade: score 0–100, accordion por check, filtro por status |
@@ -144,6 +147,33 @@ Parâmetros: `responseMimeType: "application/json"`, `temperature: 0.2`, `maxOut
 Guard: `if (!GEMINI_API_KEY) return 503` — dispara antes do auth check.
 
 Workspace resolution: `resolveWorkspace()` → 401 se sem sessão → 200 + JSON diagnóstico se autenticado.
+
+**Payload — 4 secções injectadas no user message:**
+
+| Secção | Fonte | Conteúdo |
+|---|---|---|
+| SECTION 1 | `campaign_summary` | `campaign_name · spend · conversions · CPA · ROAS [· budget_total quando disponível]` |
+| SECTION 2 | Derivação on-the-fly | Campanhas com spend > 0 e conversões = 0 (CRITICAL se total > R$500) |
+| SECTION 3 | `fn_campaign_snapshot_delta` | Delta D-1 vs D-8 por métrica, filtro `ABS(delta) > 15%` |
+| SECTION 4 | `data_quality_report` | Findings failed/warning — `[TRACKING]` / `[DATA]` / `[SEMANTIC]` |
+
+**SYSTEM_PROMPT — Framework de diagnóstico:**
+- **P1/P2/P3** — classificação de prioridade com impacto em BRL obrigatório para P1/P2
+- **Layer 0 — Tracking Integrity** — avaliado antes de qualquer padrão de performance; falhas `[TRACKING]` elevam para P1
+- **Causal pattern library** — HIGH-RESOLUTION (CTR/CPC) + BASELINE
+- **`probable_causes[]`** — array estruturado: `layer | confidence | cause | evidence`; tracking sempre primeiro; máx 3 items
+
+**Output JSON:**
+```typescript
+{
+  insight_summary:     string;   // pt-BR, max 100 chars
+  technical_diagnosis: string;   // English, 2–3 sentences
+  recommended_action:  string;   // pt-BR, executable
+  priority_score:      1 | 2 | 3 | 4 | 5;
+  probable_causes:     ProbableCause[];
+  is_simulated:        false;
+}
+```
 
 ---
 
@@ -189,3 +219,4 @@ Derivação determinística em `/api/agents/decisions`: GA4 sessions (tracking) 
 | `lib/decision.ts` | `computeDecisionBrief` |
 | `lib/measurementConfig.ts` | `EVENT_FUNNEL_MAP`, `getConfiguredFunnelStep` |
 | `lib/semanticRegistry.ts` | Espelho estático do `semantic_registry.yml` para uso no frontend |
+| `lib/mail.ts` | `sendGuardianAlert(payload)` via Resend SDK; mock logger (sem throw) se `RESEND_API_KEY` ausente; template HTML dark theme |

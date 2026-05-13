@@ -56,7 +56,8 @@ Auditoria de execuções do pipeline.
 ### `sync_ads.py`
 BigQuery → Supabase para dados de Google Ads.
 
-- `sync_campaigns(bq_client, supabase, dry_run)` → UPSERT em `campaign_summary` (inclui clicks, impressions, ctr)
+- `sync_campaigns(bq_client, supabase, dry_run)` → UPSERT em `campaign_summary` (inclui clicks, impressions, ctr, daily_budget, budget_total)
+  - Campaign subquery: `MAX(campaign_budget_amount_micros) / 1e6 AS daily_budget`; `budget_total = daily_budget × period_days`; try/except fallback para NULL
 - `sync_kpi_cache_daily(bq_client, supabase, dry_run)` → UPSERT em `kpi_cache_daily` (total_cost, conversions, roas por dia)
 - `sync_keywords(bq_client, supabase, dry_run)` → UPSERT em `keyword_analysis`
 - `ga4_real_data_available(bq_client, ga4_dataset)` → verifica `INFORMATION_SCHEMA.TABLES`

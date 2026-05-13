@@ -18,6 +18,8 @@ clicks           INTEGER DEFAULT 0              -- migration 012
 impressions      INTEGER DEFAULT 0              -- migration 012
 ctr              NUMERIC(8,6) DEFAULT 0         -- fração, recomputar de clicks/impressions
 ad_quality_score NUMERIC(4,2)                   -- nullable; não disponível em PMax/Display
+daily_budget     NUMERIC DEFAULT NULL           -- migration 015; campaign_budget_amount_micros / 1e6
+budget_total     NUMERIC DEFAULT NULL           -- migration 015; daily_budget × period_days
 data_source      TEXT DEFAULT 'google_ads'
 source_platform  TEXT
 is_mock          BOOLEAN DEFAULT FALSE
@@ -232,6 +234,7 @@ UNIQUE (workspace_id, dedupe_key)
 | `012_campaign_summary_expand_metrics.sql` | Adiciona `clicks`, `impressions`, `ctr`, `ad_quality_score` à `campaign_summary` |
 | `013_rls_hardening.sql` | Substitui `TO public` por `TO authenticated` workspace-scoped via `profiles` em 12 tabelas |
 | `014_agent_decisions.sql` | Cria `agent_decisions` + trigger + RLS + índices |
+| `015_campaign_summary_budget.sql` | Adiciona `daily_budget` + `budget_total` (NUMERIC, nullable) à `campaign_summary` — Forecaster unlock |
 
 **Regra:** migrations aplicadas nunca são modificadas — risco de checksum drift no Supabase CLI.
 

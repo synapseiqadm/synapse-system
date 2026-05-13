@@ -152,3 +152,92 @@ A Fase 2 fez a plataforma evoluir de pipeline de dados estático para ecossistem
 - **3.4** — Forecaster: desbloqueado após Migration 015 (`budget_total`) + ingestão Google Ads
 
 > A Fase 2 estabeleceu os "músculos" (agentes e persistência). A Fase 3 é o "cérebro" — o sistema passa a entender *por que* os números mudaram.
+
+---
+
+## v3.1 — Glass Box: Conectores com Dados Reais
+
+**Problema:** `/connectors` mostrava dados estáticos; banner de tracking sempre verde independente do estado real.
+
+**Entregues:**
+- Nova API route `/api/connectors/status` — lê `sync_runs` (Google Ads + GA4) e `data_quality_report`; mapeia status real (synced/pending/error)
+- Página `/connectors` reescrita: dados live, stats bar (Conectados/Aguardando/Com Erro/Desconectados), `ConnectorCard` com quality summary
+- `hasCriticalIssues` — banner vermelho apenas para `status=failed` ou `severity=high/critical`
+- **Fix (`412e84c`):** triple-cache bug: `force-dynamic` + `revalidate=0` na route + `{ cache: "no-store" }` no fetch + `setTrackingIssues([])` antes do await
+
+`commit: db3b8b7, 412e84c`
+
+---
+
+## v3.2 — Detective: Taxonomia Causal no Gemini
+
+**Entregues:**
+- **SYSTEM_PROMPT:** Layer 0 — Tracking Integrity (avaliado antes de qualquer padrão); regras explícitas por check UTM/GA4; tracking failures elevam para P1 (não P3)
+- **SECTION 4 — Governance Signals** injectada no payload com categorias `[TRACKING]` / `[DATA]` / `[SEMANTIC]`
+- Fetch paralelo de `data_quality_report` (failed/warning, deduplicado por `check_name`) na narrative route
+- `buildUserMessage()` actualizado para aceitar `governanceFindings` e construir SECTION 4
+
+`commit: db3b8b7`
+
+---
+
+## v3.3 — Guardian: Alertas P1 Autónomos
+
+**Entregues:**
+- `/api/cron/guardian/route.ts` — handler Vercel Cron; auth `Authorization: Bearer <CRON_SECRET>`; admin client com `SUPABASE_SERVICE_KEY` (bypassa RLS)
+- `lib/mail.ts` — `sendGuardianAlert()` via Resend SDK; mock logger sem throw quando key ausente; template HTML dark theme
+- `frontend/vercel.json` — `"schedule": "0 */4 * * *"` (a cada 4h)
+- **Idempotência:** verifica `operational_events` por `event_type=guardian_alert` + `decision_id` antes de enviar; regista após envio
+- **P1 proxy:** `metadata.is_critical === true` (sem coluna `priority_score` em `agent_decisions`; `is_critical` definido pelo Anomaly Scout quando `total_waste >= R$500`)
+- **Validado:** email entregue em produção local — "R$ 745.91 em gasto sem conversão — 7 campanha(s)", Anomaly Scout, CTA funcional
+
+`commit: 857e54c`
+
+---
+
+## v3.5 — Causal JSON: `probable_causes[]` Estruturado
+
+**Entregues:**
+- **SYSTEM_PROMPT:** bloco de output `probable_causes[]` com schema `layer | confidence | cause | evidence`; tracking sempre primeiro se SECTION 4 tem falhas; máx 3 items; `confidence = high/medium/low`
+- **`AINarrativeCard.tsx`:** secção "Causas Prováveis" com badges por camada (TRACKING=red, CREATIVE=amber, AUDIENCE=violet, LANDING=orange, BUDGET=emerald) e dots de confiança
+- **`AgentDecisionFeed.tsx`:** `deriveProbableCauses()` determinístico (GA4 sessions → CTR → governance → landing fallback); badges ALTA/MÉD/BAIXA
+- **`/api/agents/decisions`:** `ProbableCause` interface; parallel fetch `campaign_summary` + `ga4_first_light_summary` + `semantic_governance_findings`
+- Normalização: `parsed.probable_causes = Array.isArray(...) ? ... : []`
+
+`commit: 93fb3f3`
+
+---
+
+## v3.4 — Forecaster: Ingestão de Orçamento
+
+**Entregues:**
+- **Migration 015** (`015_campaign_summary_budget.sql`): `ADD COLUMN IF NOT EXISTS daily_budget NUMERIC` + `budget_total NUMERIC` — aplicado no Supabase `synapse-system`
+- **`sync_ads.py`:** Campaign subquery usa `MAX(campaign_budget_amount_micros) / 1e6 AS daily_budget` com `GROUP BY`; `budget_total = daily_budget × period_days`; try/except fallback para NULL; `from datetime import date` adicionado
+- **`narrative/route.ts`:** `CampaignRow` extendido com `daily_budget` + `budget_total`; SELECT actualizado; SECTION 1 appends `· budget_total R$X` quando disponível; debug console.logs removidos (pós-validação v3.2/v3.5)
+
+`commit: 156d48d`
+
+---
+
+## 🏁 Encerramento — Fase 3: Detective & Guardian
+
+**Data:** 2026-05-13 | **Commits:** `db3b8b7` → `156d48d`
+
+A Fase 3 transformou o SynapseIQ de sistema de alertas de performance para sistema de diagnóstico causal. O sistema agora entende *por que* os números mudaram, classifica falhas por camada (Tracking → Criativo → Audiência → Landing → Orçamento), e dispara alertas críticos de forma autónoma.
+
+### Baseline para Fase 4
+
+| Componente | Estado |
+|---|---|
+| Backend Python | Pipeline diário + budget sync (daily_budget, budget_total) |
+| Database | Migration 015 aplicada — 15 migrations no total |
+| Frontend Next.js | Connectors live + Narrative causal + Guardian UI |
+| IA | Gemini 2.5 Flash com Layer 0 + SECTION 4 + probable_causes[] |
+| Alertas | Guardian a cada 4h — validado; Resend mock local / domínio pendente |
+
+### Fase 4 — Candidatos
+
+- **Forecaster activo:** usar `daily_budget` + `budget_total` para diagnósticos de pace (orçamento consumido vs projetado)
+- **Multi-tenant onboarding:** substituir policies `TO public` scoped ao UUID Woke por `TO authenticated` dinâmico
+- **Creative Critic enrichment:** ingestão de dados de anúncio (ad_name, ad_group) para diagnóstico a nível criativo
+- **Self-healing suggestions:** sugestões de realocação de budget com preview de impacto quantificado

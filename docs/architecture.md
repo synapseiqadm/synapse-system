@@ -1,6 +1,6 @@
 # Arquitectura — SynapseIQ
 
-**Estado actual:** v2.2.2 (Maio 2026)
+**Estado actual:** v3.4 (Maio 2026)
 
 ---
 
@@ -16,23 +16,26 @@ GitHub (synapseiqadm/synapse-system)
 │       │   ├── login/page.tsx       → autenticação Supabase
 │       │   ├── dashboard/page.tsx   → painel principal
 │       │   ├── agents/page.tsx      → Centro de Operações (feed de decisões live)
-│       │   ├── connectors/page.tsx  → scaffolding
+│       │   ├── connectors/page.tsx  → Central de Conectores (live — sync_runs + data_quality_report)
 │       │   ├── logs/page.tsx        → Status do Sync (sync_runs live)
 │       │   └── api/
 │       │       ├── ai/narrative/route.ts
 │       │       ├── agents/decisions/route.ts
 │       │       ├── agents/action/route.ts
+│       │       ├── connectors/status/route.ts  → sync_runs + data_quality_report por plataforma
+│       │       ├── cron/guardian/route.ts       → Vercel Cron P1 alertas via Resend
 │       │       └── workspaces/[workspace_id]/
 │       │           ├── growth/{overview,funnel,events,paid-sessions}/route.ts
 │       │           ├── governance/{summary,runs,findings,evidence}/route.ts
 │       │           └── timeline/route.ts
 │       ├── components/
 │       │   ├── ExecutiveBoardView.tsx   → Painel Executivo (tab Geral)
-│       │   ├── AINarrativeCard.tsx      → Card diagnóstico Gemini
+│       │   ├── AINarrativeCard.tsx      → Card diagnóstico Gemini + probable_causes UI
 │       │   ├── GrowthIntelligenceView.tsx
 │       │   ├── InsightsView.tsx
 │       │   ├── DataQualityView.tsx
-│       │   ├── AgentDecisionFeed.tsx    → feed approve/reject
+│       │   ├── AgentDecisionFeed.tsx    → feed approve/reject + causas prováveis
+│       │   ├── ConnectorCard.tsx        → card de conector com status live
 │       │   ├── AgentCard.tsx
 │       │   ├── SyncRunsTable.tsx
 │       │   ├── Sidebar.tsx
@@ -43,7 +46,8 @@ GitHub (synapseiqadm/synapse-system)
 │       │   ├── funnel.ts
 │       │   ├── decision.ts
 │       │   ├── measurementConfig.ts
-│       │   └── semanticRegistry.ts
+│       │   ├── semanticRegistry.ts
+│       │   └── mail.ts              → sendGuardianAlert() via Resend SDK; mock logger se key ausente
 │       └── utils/supabase/{client,server}.ts
 │
 ├── backend/connectors/
@@ -71,7 +75,8 @@ GitHub (synapseiqadm/synapse-system)
 │   ├── test_semantic_governance.py   → 36 testes unitários
 │   └── test_ai_narrative.py          → 5 testes (4 mock + 1 live)
 │
-├── supabase/migrations/             → 014 migrations aplicadas (001–014)
+├── supabase/migrations/             → 015 migrations aplicadas (000–015)
+├── frontend/vercel.json             → Vercel Cron: /api/cron/guardian a cada 4h
 │
 ├── docs/
 │   ├── architecture.md              ← este ficheiro
@@ -127,7 +132,13 @@ agent_decisions.py (Growth Master, Creative Critic, Anomaly Scout)
                     ↓ (tudo no Supabase)
             Next.js API Routes
                     ↓
-              Dashboard + /agents
+              Dashboard + /agents + /connectors
+
+Vercel Cron (a cada 4h) → /api/cron/guardian
+    ├── lê agent_decisions (type=alert, status=pending, metadata.is_critical=true)
+    ├── verifica idempotência via operational_events (guardian_alert + decision_id)
+    ├── envia email via Resend SDK (sendGuardianAlert)
+    └── regista em operational_events
 ```
 
 ---
