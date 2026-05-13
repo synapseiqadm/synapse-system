@@ -55,8 +55,9 @@ Address the highest-priority tier as the main narrative; cite lower tiers briefl
     · Budget reallocation with quantifiable projected gain
 
   P3 — GOVERNANÇA / QUALIDADE (priority_score 1–2)
-    · Data quality warnings, suspicious tracking events, UTM gaps
-    · Deviations without direct financial impact
+    · Semantic registry mismatches, conversion action gaps (non-tracking)
+    · NOTE: [TRACKING] governance failures (UTM gaps, GA4 unavailable) are NOT P3 —
+      they elevate to P1 via Layer 0 (see below)
 
 ## Financial Impact — MANDATORY for P1 and P2
 For EVERY P1 or P2 finding, include a BRL estimate inside technical_diagnosis:
@@ -66,7 +67,7 @@ For EVERY P1 or P2 finding, include a BRL estimate inside technical_diagnosis:
   · Scale opportunity: "reallocating R$X to campaign B projected +N conversions"
 
 ## Input format
-The user message contains up to three sections:
+The user message contains up to four sections:
 
   SECTION 1 — CAMPAIGN PERFORMANCE (current 30-day period, always present)
     campaign_name · spend (R$) · conversions · CPA (R$/conv) · ROAS
@@ -79,9 +80,42 @@ The user message contains up to three sections:
     campaign_name · metric_name · value_now · value_then · delta_percentage · impact_level
     If empty: base diagnosis on Sections 1 and 2 only.
 
+  SECTION 4 — GOVERNANCE SIGNALS (rule-based tracking/data checks, always reliable)
+    Categories: [TRACKING] | [DATA] | [SEMANTIC]
+    [TRACKING] findings affect the reliability of ALL performance diagnosis — evaluate FIRST.
+    format: check_name · status · severity
+    If empty: assume tracking is intact and data is clean.
+
 ## Available delta metrics — STRICT BOUNDARY (Section 3 only)
 spend, conversions, clicks, cpa, cpc, ctr.
 DO NOT infer: impressions, reach, frequency, quality_score, or any absent metric.
+
+## Layer 0 — Tracking Integrity (evaluate BEFORE performance patterns)
+
+If Section 4 contains [TRACKING] findings with status failed or warning, evaluate these FIRST:
+
+  utm_campaign_empty_in_paid_urls — failed/warning
+    → UTM attribution broken. Campaign-level conversion data is UNRELIABLE.
+    → Elevate to P1 (priority_score ≥ 4) regardless of conversion numbers.
+    → Begin technical_diagnosis with:
+      "⚠️ TRACKING: utm_campaign attribution compromised. Conversion figures cannot be
+       attributed at campaign level — observed zeros may reflect attribution gaps, not true
+       campaign performance."
+
+  ga4_dataset_available — failed
+    → No GA4 session data. Funnel analysis is impossible.
+    → Caveat all P1 funnel findings: "GA4 unavailable — direct funnel diagnosis blocked."
+
+  ga4_ads_overlap_insufficient — failed/warning
+    → GA4 ↔ Ads session match below threshold. Cross-channel signals are partially unreliable.
+    → Note in technical_diagnosis: "Cross-channel attribution has low confidence."
+
+  ga4_non_production_traffic_detected — failed/warning
+    → Non-production sessions contaminate conversion data.
+    → Caveat conversion counts: "Possible data contamination from non-production traffic."
+
+If Layer 0 is clean (no [TRACKING] issues in Section 4): proceed directly to performance
+pattern matching below.
 
 ## Causal pattern library
 
@@ -178,6 +212,32 @@ type DeterministicSignal = {
   description: string;
 };
 
+type GovernanceFinding = {
+  check_name: string;
+  status:     string;
+  severity:   string;
+};
+
+// Checks that affect reliability of ALL performance diagnosis
+const TRACKING_CHECKS = new Set([
+  "ga4_dataset_available",
+  "ga4_ads_overlap_insufficient",
+  "utm_campaign_empty_in_paid_urls",
+  "ga4_non_production_traffic_detected",
+  "ga4_suspicious_event_names_detected",
+]);
+
+const DATA_CHECKS = new Set([
+  "campaign_summary_missing_campaign_id",
+  "campaign_summary_freshness",
+  "keyword_analysis_freshness",
+  "mock_data_presence",
+  "ga4_events_freshness",
+  "ga4_has_page_view",
+  "ga4_has_session_start",
+  "ga4_has_conversion_events",
+]);
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function buildUserMessage(
@@ -185,6 +245,7 @@ function buildUserMessage(
   workspaceName: string,
   campaignRows: CampaignRow[],
   deterministicSignals: DeterministicSignal[],
+  governanceFindings: GovernanceFinding[],
 ): string {
   const parts: string[] = [`Workspace: ${workspaceName}`];
 
@@ -224,6 +285,24 @@ function buildUserMessage(
     parts.push("SECTION 3 — DELTA ANALYSIS\n(empty — D-8 snapshot not yet available)");
   }
 
+  // Section 4 — Governance Signals
+  if (governanceFindings.length > 0) {
+    const tracking = governanceFindings.filter((f) => TRACKING_CHECKS.has(f.check_name));
+    const data     = governanceFindings.filter((f) => !TRACKING_CHECKS.has(f.check_name) && DATA_CHECKS.has(f.check_name));
+    const semantic = governanceFindings.filter((f) => !TRACKING_CHECKS.has(f.check_name) && !DATA_CHECKS.has(f.check_name));
+
+    const lines = [
+      "SECTION 4 — GOVERNANCE SIGNALS (rule-based, always reliable)",
+      "Evaluate [TRACKING] findings FIRST — they affect reliability of all performance diagnosis.",
+    ];
+    for (const f of tracking) lines.push(`  [TRACKING] ${f.check_name}: ${f.status} · ${f.severity}`);
+    for (const f of data)     lines.push(`  [DATA] ${f.check_name}: ${f.status} · ${f.severity}`);
+    for (const f of semantic) lines.push(`  [SEMANTIC] ${f.check_name}: ${f.status} · ${f.severity}`);
+    parts.push(lines.join("\n"));
+  } else {
+    parts.push("SECTION 4 — GOVERNANCE SIGNALS\n(clean — no tracking or data integrity issues detected)");
+  }
+
   parts.push("Generate the diagnostic JSON.");
   return parts.join("\n\n");
 }
@@ -255,8 +334,8 @@ export async function GET() {
       );
     }
 
-    // Fetch snapshot delta and campaign summary in parallel
-    const [snapshotResult, campaignResult] = await Promise.all([
+    // Fetch snapshot delta, campaign summary, and governance findings in parallel
+    const [snapshotResult, campaignResult, governanceResult] = await Promise.all([
       supabase.rpc("fn_campaign_snapshot_delta", { target_workspace_id: workspace.id }),
       supabase
         .from("campaign_summary")
@@ -265,6 +344,13 @@ export async function GET() {
         .order("date_range_end", { ascending: false })
         .order("loaded_at",      { ascending: false })
         .limit(100),
+      supabase
+        .from("data_quality_report")
+        .select("check_name, status, severity")
+        .eq("workspace_id", workspace.id)
+        .in("status", ["failed", "warning"])
+        .order("checked_at", { ascending: false })
+        .limit(60),
     ]);
 
     if (snapshotResult.error) {
@@ -306,12 +392,21 @@ export async function GET() {
       });
     }
 
+    // Deduplicate governance findings: most recent per check_name
+    const seenChecks = new Set<string>();
+    const governanceFindings: GovernanceFinding[] = (governanceResult.data ?? []).filter((r) => {
+      if (seenChecks.has(r.check_name)) return false;
+      seenChecks.add(r.check_name);
+      return true;
+    });
+
     // Build enriched user message
     const userMessage = buildUserMessage(
       snapshotRows,
       workspace.name,
       campaignRows,
       deterministicSignals,
+      governanceFindings,
     );
 
     // Call Gemini REST API

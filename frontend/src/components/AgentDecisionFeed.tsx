@@ -13,8 +13,17 @@ import {
   Bot,
 } from "lucide-react";
 
-export type DecisionType   = "analysis" | "suggestion" | "action" | "alert";
-export type DecisionStatus = "pending" | "approved" | "rejected" | "auto-applied";
+export type DecisionType      = "analysis" | "suggestion" | "action" | "alert";
+export type DecisionStatus    = "pending" | "approved" | "rejected" | "auto-applied";
+export type CauseConfidence   = "high" | "medium" | "low";
+export type CauseLayer        = "tracking" | "creative" | "audience" | "landing" | "budget";
+
+export interface ProbableCause {
+  confidence: CauseConfidence;
+  layer:      CauseLayer;
+  cause:      string;
+  evidence:   string;
+}
 
 export interface Decision {
   id: number;
@@ -29,6 +38,7 @@ export interface Decision {
   value?: string;
   query?: string;
   rationale?: string;
+  probableCauses?: ProbableCause[];
 }
 
 const TYPE_CFG: Record<DecisionType, {
@@ -209,6 +219,32 @@ export function AgentDecisionFeed({ decisions, filterAgentId, onRefresh }: Agent
                   <div className="mb-2 bg-[#060a14] border border-[#1a2540] rounded-lg px-2.5 py-1.5">
                     <p className="text-[9px] text-slate-600 mb-0.5 uppercase tracking-wide font-semibold">Raciocínio</p>
                     <p className="text-[10px] text-slate-500 leading-relaxed">{d.rationale}</p>
+                  </div>
+                )}
+
+                {/* Probable causes */}
+                {d.probableCauses && d.probableCauses.length > 0 && (
+                  <div className="mb-2 bg-[#060a14] border border-[#1a2540] rounded-lg px-2.5 py-2">
+                    <p className="text-[9px] text-slate-600 mb-1.5 uppercase tracking-wide font-semibold">Causas Prováveis</p>
+                    <div className="space-y-1.5">
+                      {d.probableCauses.map((c, i) => (
+                        <div key={i} className="flex items-start gap-2">
+                          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded shrink-0 border ${
+                            c.confidence === "high"
+                              ? "bg-red-500/15 text-red-400 border-red-500/20"
+                              : c.confidence === "medium"
+                                ? "bg-amber-500/15 text-amber-400 border-amber-500/20"
+                                : "bg-slate-700/40 text-slate-500 border-slate-700/40"
+                          }`}>
+                            {c.confidence === "high" ? "ALTA" : c.confidence === "medium" ? "MÉD" : "BAIXA"}
+                          </span>
+                          <div className="min-w-0">
+                            <p className="text-[10px] text-slate-300 font-semibold leading-tight">{c.cause}</p>
+                            <p className="text-[9px] text-slate-600 leading-relaxed">{c.evidence}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
 
