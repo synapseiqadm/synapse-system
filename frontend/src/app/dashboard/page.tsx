@@ -564,7 +564,12 @@ export default function DashboardPage() {
 
   // Workspace switching (superadmin)
   const [workspaces, setWorkspaces]             = useState<Workspace[]>([]);
-  const [activeWorkspaceId, setActiveWorkspaceId] = useState(DEFAULT_WORKSPACE.id);
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>(() => {
+    // Read cookie synchronously to avoid race condition on initial render
+    if (typeof document === "undefined") return DEFAULT_WORKSPACE.id;
+    const m = document.cookie.match(new RegExp(`${WORKSPACE_COOKIE}=(${UUID_RE.source})`));
+    return m?.[1] ?? DEFAULT_WORKSPACE.id;
+  });
   const [switching, setSwitching]               = useState(false);
 
   const activeWorkspaceName =
@@ -577,11 +582,8 @@ export default function DashboardPage() {
   const [keywords, setKeywords]               = useState<KeywordRow[]>([]);
   const [keywordsLoading, setKeywordsLoading] = useState(true);
 
-  // On mount: read active workspace from cookie, then load workspace list
+  // On mount: load user + workspace list
   useEffect(() => {
-    const m = document.cookie.match(new RegExp(`${WORKSPACE_COOKIE}=(${UUID_RE.source})`));
-    if (m?.[1]) setActiveWorkspaceId(m[1]);
-
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (user?.email) setUserEmail(user.email);
     });
@@ -632,6 +634,7 @@ export default function DashboardPage() {
   const handleSwitchWorkspace = async (ws: Workspace) => {
     if (ws.id === activeWorkspaceId || switching) return;
     setSwitching(true);
+    console.log(`[workspace:switch] ${activeWorkspaceId} → ${ws.id} (${ws.name})`);
     await fetch("/api/workspaces/switch", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -678,11 +681,11 @@ export default function DashboardPage() {
         {/* Body */}
         <main className="flex-1 overflow-y-auto p-6">
           {nav === "geral"      && <ExecutiveBoardView workspaceId={activeWorkspaceId} />}
-          {nav === "growth"     && <GrowthIntelligenceView workspaceId={activeWorkspaceId} />}
+          {nav === "growth"     && <GrowthIntelligenceView workspaceId={activeWorkspaceId} workspaceName={activeWorkspaceName} />}
           {nav === "campanhas"  && <CampanhasView campaigns={campaigns} loading={campaignsLoading} />}
           {nav === "keywords"   && <KeywordsView  keywords={keywords}   loading={keywordsLoading} />}
-          {nav === "qualidade"  && <DataQualityView workspaceId={activeWorkspaceId} />}
-          {nav === "insights"   && <InsightsView workspaceId={activeWorkspaceId} />}
+          {nav === "qualidade"  && <DataQualityView workspaceId={activeWorkspaceId} workspaceName={activeWorkspaceName} />}
+          {nav === "insights"   && <InsightsView workspaceId={activeWorkspaceId} workspaceName={activeWorkspaceName} />}
 
           {(nav === "canais" || nav === "configuracoes") && (
             <div className="flex flex-col items-center justify-center h-64 text-zinc-700">

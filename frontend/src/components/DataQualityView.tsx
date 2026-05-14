@@ -6,7 +6,6 @@ import {
   ChevronDown, ChevronUp, Clock, ShieldCheck, ShieldAlert,
   Database, Building2,
 } from "lucide-react";
-import { DEFAULT_WORKSPACE } from "@/lib/workspace";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -209,7 +208,7 @@ type SortOption   = "severity" | "date" | "rows";
 
 // ─── Main view ────────────────────────────────────────────────────────────────
 
-export function DataQualityView({ workspaceId }: { workspaceId: string }) {
+export function DataQualityView({ workspaceId, workspaceName }: { workspaceId: string; workspaceName: string }) {
   const supabase = createClient();
 
   const [checks, setChecks]         = useState<DataQualityReport[]>([]);
@@ -220,6 +219,7 @@ export function DataQualityView({ workspaceId }: { workspaceId: string }) {
   const [sort, setSort]             = useState<SortOption>("severity");
 
   useEffect(() => {
+    let cancelled = false;
     async function load() {
       setLoading(true); setError(null);
       const { data, error: sbError } = await supabase
@@ -228,12 +228,14 @@ export function DataQualityView({ workspaceId }: { workspaceId: string }) {
         .eq("workspace_id", workspaceId)
         .order("checked_at", { ascending: false })
         .limit(200);
+      if (cancelled) return;
       if (sbError) { setError(sbError.message); setLoading(false); return; }
       setChecks((data as DataQualityReport[]) ?? []);
       setLoading(false);
     }
-    load();
-  }, []);
+    void load();
+    return () => { cancelled = true; };
+  }, [workspaceId]);
 
   const latest = useMemo(() => getLatestChecksByName(checks), [checks]);
 
@@ -324,7 +326,7 @@ export function DataQualityView({ workspaceId }: { workspaceId: string }) {
       <div className="flex items-center gap-1.5 mb-4">
         <Building2 size={11} className="text-zinc-600" />
         <span className="text-[11px] text-zinc-500 font-mono">
-          Workspace: <span className="text-zinc-400">{DEFAULT_WORKSPACE.name}</span>
+          Workspace: <span className="text-zinc-400">{workspaceName}</span>
         </span>
       </div>
 

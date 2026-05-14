@@ -5,7 +5,6 @@ import {
   ChevronDown, ChevronUp, Clock, Loader2, ShieldCheck, ShieldAlert,
   Database, Building2, CalendarDays, TrendingUp, Zap, Eye,
 } from "lucide-react";
-import { DEFAULT_WORKSPACE } from "@/lib/workspace";
 import { getCheckLabel, isReviewRequired } from "@/lib/semanticRegistry";
 import type {
   GrowthOverviewResponse,
@@ -1046,7 +1045,7 @@ function EvidenceSection({ state, env }: { state: ApiState<GovernanceEvidenceRes
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export function GrowthIntelligenceView({ workspaceId }: { workspaceId: string }) {
+export function GrowthIntelligenceView({ workspaceId, workspaceName }: { workspaceId: string; workspaceName: string }) {
   const [period, setPeriod] = useState<Period>(30);
   const [env,    setEnv]    = useState<EnvFilter>("all");
 
@@ -1109,7 +1108,7 @@ export function GrowthIntelligenceView({ workspaceId }: { workspaceId: string })
       <div className="flex items-center gap-1.5">
         <Building2 size={11} className="text-zinc-600" />
         <span className="text-[11px] text-zinc-500 font-mono">
-          Workspace: <span className="text-zinc-400">{DEFAULT_WORKSPACE.name}</span>
+          Workspace: <span className="text-zinc-400">{workspaceName}</span>
         </span>
       </div>
 

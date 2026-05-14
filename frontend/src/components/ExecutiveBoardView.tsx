@@ -344,6 +344,7 @@ export function ExecutiveBoardView({ workspaceId }: { workspaceId: string }) {
   const [selectedPeriod, setSelectedPeriod] = useState<7 | 15 | 30>(30);
 
   useEffect(() => {
+    let cancelled = false;
     async function loadAll() {
       setLoading(true);
       const [insightRes, ga4Res, dqRes, syncRes, kpiRes, anomalyRes] = await Promise.all([
@@ -398,14 +399,16 @@ export function ExecutiveBoardView({ workspaceId }: { workspaceId: string }) {
         });
       }
 
+      if (cancelled) return;
       setDqChecks((dqRes.data  as DQCheck[])  ?? []);
       setSyncRuns((syncRes.data as SyncRun[])  ?? []);
       setKpiRows(     (kpiRes.data     as KpiRow[])      ?? []);
       setAnomalyEvents((anomalyRes.data as AnomalyEvent[]) ?? []);
       setLoading(false);
     }
-    loadAll();
-  }, []);
+    void loadAll();
+    return () => { cancelled = true; };
+  }, [workspaceId]);
 
   // ── Derived ───────────────────────────────────────────────────────────────
 

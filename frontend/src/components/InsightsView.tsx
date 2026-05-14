@@ -6,7 +6,6 @@ import {
   ChevronDown, ChevronUp, Clock, Lightbulb, Search,
   Database, RefreshCw, Building2,
 } from "lucide-react";
-import { DEFAULT_WORKSPACE } from "@/lib/workspace";
 import { computeDecisionBrief, type DecisionSignal, type Ga4DecisionInput } from "@/lib/decision";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -628,7 +627,7 @@ type TypeFilter   = "all" | "high_priority" | "campaigns" | "keywords" | "qualit
 
 // ─── Main view ────────────────────────────────────────────────────────────────
 
-export function InsightsView({ workspaceId }: { workspaceId: string }) {
+export function InsightsView({ workspaceId, workspaceName }: { workspaceId: string; workspaceName: string }) {
   const supabase = createClient();
 
   const [insights, setInsights]     = useState<InsightFeedItem[]>([]);
@@ -642,6 +641,7 @@ export function InsightsView({ workspaceId }: { workspaceId: string }) {
   const [ga4Input, setGa4Input]         = useState<Ga4DecisionInput | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     async function load() {
       setLoading(true); setError(null);
       const { data, error: sbError } = await supabase
@@ -650,14 +650,17 @@ export function InsightsView({ workspaceId }: { workspaceId: string }) {
         .eq("workspace_id", workspaceId)
         .order("updated_at", { ascending: false })
         .limit(100);
+      if (cancelled) return;
       if (sbError) { setError(sbError.message); setLoading(false); return; }
       setInsights((data as InsightFeedItem[]) ?? []);
       setLoading(false);
     }
-    load();
-  }, []);
+    void load();
+    return () => { cancelled = true; };
+  }, [workspaceId]);
 
   useEffect(() => {
+    let cancelled = false;
     async function loadGa4() {
       const { data } = await supabase
         .from("ga4_first_light_summary")
@@ -665,6 +668,7 @@ export function InsightsView({ workspaceId }: { workspaceId: string }) {
         .eq("workspace_id", workspaceId)
         .limit(1)
         .maybeSingle();
+      if (cancelled) return;
       if (data) {
         setGa4Input({
           sessions:   typeof data.sessions === "number" ? data.sessions : 0,
@@ -672,8 +676,9 @@ export function InsightsView({ workspaceId }: { workspaceId: string }) {
         });
       }
     }
-    loadGa4();
-  }, []);
+    void loadGa4();
+    return () => { cancelled = true; };
+  }, [workspaceId]);
 
   const updateStatus = useCallback(async (id: string, to: InsightStatus) => {
     const key = `${id}:${to}`;
@@ -812,7 +817,7 @@ export function InsightsView({ workspaceId }: { workspaceId: string }) {
       <div className="flex items-center gap-1.5 mb-4">
         <Building2 size={11} className="text-zinc-600" />
         <span className="text-[11px] text-zinc-500 font-mono">
-          Insights do workspace: <span className="text-zinc-400">{DEFAULT_WORKSPACE.name}</span>
+          Insights do workspace: <span className="text-zinc-400">{workspaceName}</span>
         </span>
       </div>
 
