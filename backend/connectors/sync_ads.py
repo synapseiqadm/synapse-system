@@ -345,7 +345,7 @@ def sync_keywords(
     QUERY = f"""
         SELECT
             c.campaign_id,
-            c.campaign_name,
+            ANY_VALUE(c.campaign_name)              AS campaign_name,
             k.ad_group_criterion_keyword_text       AS keyword,
             k.ad_group_criterion_keyword_match_type AS match_type,
             SUM(s.metrics_clicks)                   AS clicks,
@@ -364,13 +364,14 @@ def sync_keywords(
           ON  s.ad_group_criterion_criterion_id = k.ad_group_criterion_criterion_id
           AND s.ad_group_id                     = k.ad_group_id
         JOIN (
-            SELECT DISTINCT campaign_id, campaign_name
+            SELECT campaign_id, MAX(campaign_name) AS campaign_name
             FROM `{GCP_PROJECT_ID}.{GOOGLE_ADS_DATASET}.{CAMPAIGN_TABLE}`
+            GROUP BY campaign_id
         ) c
           ON s.campaign_id = c.campaign_id
         WHERE s._DATA_DATE BETWEEN '{DATE_RANGE_START}' AND '{DATE_RANGE_END}'
         GROUP BY
-            c.campaign_id, c.campaign_name,
+            c.campaign_id,
             k.ad_group_criterion_keyword_text,
             k.ad_group_criterion_keyword_match_type
         HAVING clicks > 0
