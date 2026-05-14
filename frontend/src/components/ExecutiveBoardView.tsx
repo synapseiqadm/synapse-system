@@ -223,10 +223,19 @@ function MomentumChart({ data, trendDelta, isAnomaly, markers }: MomentumChartPr
   const deltaFmt  = fmtDelta(trendDelta);
   const lastPoint = data.length > 0 ? data[data.length - 1] : null;
 
-  if (data.length <= 1) {
+  if (data.length === 0) {
     return (
       <div className="h-[72px] flex items-center justify-center text-[9px] text-zinc-700 font-mono">
-        sem dados para o período
+        sem dados no período
+      </div>
+    );
+  }
+
+  if (data.length === 1) {
+    return (
+      <div className="h-[72px] flex flex-col items-center justify-center gap-0.5">
+        <span className="text-[9px] text-zinc-600 font-mono">1 dia disponível · gráfico requer ≥ 2 dias</span>
+        <span className="text-[9px] text-zinc-700 font-mono">{data[0].date} · ROAS {data[0].roas.toFixed(2).replace(".", ",")}x</span>
       </div>
     );
   }
@@ -641,6 +650,12 @@ export function ExecutiveBoardView({ workspaceId }: { workspaceId: string }) {
             <div className="flex items-center gap-1.5">
               <div className="w-1 h-1 rounded-full bg-zinc-600" />
               <span className="text-[10px] text-zinc-600">Sync: {syncTimeAgo}</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className={`w-1 h-1 rounded-full ${periodData.length >= 7 ? "bg-zinc-600" : "bg-amber-500/50"}`} />
+              <span className={`text-[10px] font-mono ${periodData.length >= 7 ? "text-zinc-600" : "text-amber-600/70"}`}>
+                {periodData.length}d histórico
+              </span>
             </div>
             {suspShare !== null && (
               <span className="text-[10px] text-zinc-700 ml-auto font-mono">
