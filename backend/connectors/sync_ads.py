@@ -60,15 +60,16 @@ def sync_campaigns(
             c.daily_budget
         FROM `{GCP_PROJECT_ID}.{GOOGLE_ADS_DATASET}.{STATS_TABLE}` s
         JOIN (
-            SELECT campaign_id, campaign_name,
+            SELECT campaign_id,
+                   MAX(campaign_name)                           AS campaign_name,
                    MAX(campaign_budget_amount_micros) / 1000000 AS daily_budget
             FROM `{GCP_PROJECT_ID}.{GOOGLE_ADS_DATASET}.{CAMPAIGN_TABLE}`
-            GROUP BY campaign_id, campaign_name
+            GROUP BY campaign_id
         ) c
           ON CAST(REGEXP_EXTRACT(s.campaign_base_campaign, r'/campaigns/(\\d+)') AS INT64)
              = c.campaign_id
         WHERE s.segments_date BETWEEN '{DATE_RANGE_START}' AND '{DATE_RANGE_END}'
-        GROUP BY c.campaign_id, c.campaign_name, c.daily_budget
+        GROUP BY c.campaign_id, c.campaign_name
         HAVING cost > 0
         ORDER BY cost DESC
     """
