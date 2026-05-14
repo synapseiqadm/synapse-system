@@ -1,9 +1,21 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Sparkles, ArrowRight, AlertTriangle, Loader2, WifiOff, ExternalLink, TrendingUp, TrendingDown, Minus } from "lucide-react";
+import {
+  Sparkles, ArrowRight, AlertTriangle, Loader2, WifiOff, ExternalLink,
+  TrendingUp, TrendingDown, Minus, Lightbulb,
+} from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+
+export interface KpiContext {
+  roas:             number | null;
+  trendDelta:       number;
+  totalSpend:       number | null;
+  totalConversions: number | null;
+  cpc:              number | null;
+  ctr:              number | null; // decimal: 0.025 = 2.5%
+}
 
 interface ProbableCause {
   layer:      "tracking" | "creative" | "audience" | "landing" | "budget";
@@ -41,7 +53,106 @@ type FetchState =
   | { status: "success"; narrative: NarrativeData }
   | { status: "offline" };
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function fmtBRLCompact(v: number): string {
+  if (v >= 1000) return `R$ ${(v / 1000).toFixed(1).replace(".", ",")}k`;
+  return `R$ ${Math.round(v).toLocaleString("pt-BR")}`;
+}
+
+function fmtPctDecimal(ratio: number): string {
+  return (ratio * 100).toFixed(1).replace(".", ",") + "%";
+}
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
+
+function DeltaChip({ delta }: { delta: number }) {
+  const isPos = delta >= 0;
+  return (
+    <span className="inline-flex items-baseline gap-0.5">
+      <span className={`text-[10px] leading-none ${isPos ? "text-emerald-400" : "text-red-400"}`}>
+        {isPos ? "▲" : "▼"}
+      </span>
+      <span className="text-[11px] font-mono text-zinc-500">
+        {Math.abs(delta).toFixed(1).replace(".", ",")}%
+      </span>
+    </span>
+  );
+}
+
+function MetricCell({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-[9px] font-medium text-zinc-600 uppercase tracking-widest mb-0.5">{label}</p>
+      <p className="text-[13px] font-semibold text-zinc-300 font-mono">{value}</p>
+    </div>
+  );
+}
+
+function KpiLayer({ kpi }: { kpi: KpiContext }) {
+  const showDelta = Math.abs(kpi.trendDelta) >= 0.5;
+  return (
+    <div className="px-5 pt-4 pb-3 border-b border-zinc-800/30">
+      {/* Layer 1 — primary metric */}
+      <div className="flex items-end gap-3 mb-3">
+        <div>
+          <p className="text-[9px] font-medium text-zinc-600 uppercase tracking-widest mb-0.5">ROAS · período</p>
+          <div className="flex items-end gap-2">
+            <span className="text-2xl font-bold leading-none font-mono text-zinc-100">
+              {kpi.roas !== null ? `${kpi.roas.toFixed(2).replace(".", ",")}x` : "—"}
+            </span>
+            {showDelta && <DeltaChip delta={kpi.trendDelta} />}
+          </div>
+        </div>
+      </div>
+
+      {/* Layer 2 — secondary metrics */}
+      <div className="grid grid-cols-3 gap-3">
+        <MetricCell
+          label="Investimento"
+          value={kpi.totalSpend !== null ? fmtBRLCompact(kpi.totalSpend) : "—"}
+        />
+        <MetricCell
+          label="CPC médio"
+          value={kpi.cpc !== null ? `R$ ${kpi.cpc.toFixed(2).replace(".", ",")}` : "—"}
+        />
+        <MetricCell
+          label="CTR médio"
+          value={kpi.ctr !== null ? fmtPctDecimal(kpi.ctr) : "—"}
+        />
+      </div>
+    </div>
+  );
+}
+
+function NarrativeBox({
+  summary,
+  diagnosis,
+  isAlert,
+}: {
+  summary:   string;
+  diagnosis: string;
+  isAlert:   boolean;
+}) {
+  return (
+    <div className="mx-5 my-3 rounded-lg border border-zinc-700/40 bg-zinc-900 px-4 py-3">
+      <div className="flex items-start gap-2.5">
+        <Lightbulb
+          size={13}
+          className={`mt-0.5 shrink-0 ${isAlert ? "text-amber-400" : "text-indigo-400/80"}`}
+        />
+        <div className="min-w-0">
+          <p className={`text-sm font-semibold leading-snug ${isAlert ? "text-red-100/90" : "text-zinc-100"}`}>
+            {summary}
+          </p>
+          <p className="text-[11px] text-zinc-500 leading-relaxed mt-2">
+            {diagnosis}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function PriorityDots({ score, alert }: { score: number; alert: boolean }) {
   const filled = alert ? "bg-red-500" : score >= 3 ? "bg-amber-400" : "bg-indigo-500";
@@ -54,7 +165,7 @@ function PriorityDots({ score, alert }: { score: number; alert: boolean }) {
   );
 }
 
-function LoadingSkeleton() {
+function LoadingSkeleton({ kpi }: { kpi?: KpiContext }) {
   return (
     <div className="rounded-xl border border-zinc-800/60 bg-[#0f1117] overflow-hidden border-l-[3px] border-l-indigo-600/30">
       <div className="px-5 py-3 border-b border-zinc-800/40 flex items-center gap-2">
@@ -63,22 +174,25 @@ function LoadingSkeleton() {
           Executive Insight
         </span>
       </div>
-      <div className="px-5 py-5 flex flex-col gap-3">
-        <div className="flex items-center gap-2.5 text-zinc-500">
-          <Loader2 size={14} className="animate-spin shrink-0" />
-          <span className="text-[11px]">Sincronizando com a Inteligência Synapse...</span>
-        </div>
-        <div className="space-y-2 animate-pulse">
-          <div className="h-2 bg-zinc-800 rounded w-3/4" />
-          <div className="h-2 bg-zinc-800 rounded w-full" />
-          <div className="h-2 bg-zinc-800 rounded w-5/6" />
+      {kpi && <KpiLayer kpi={kpi} />}
+      {/* Narrative skeleton */}
+      <div className="mx-5 my-3 rounded-lg border border-zinc-700/40 bg-zinc-900 px-4 py-3">
+        <div className="flex items-start gap-2.5">
+          <Loader2 size={13} className="text-indigo-400/60 shrink-0 animate-spin mt-0.5" />
+          <div className="flex-1 space-y-2 animate-pulse">
+            <div className="h-2.5 bg-zinc-700/80 rounded w-full" />
+            <div className="h-2.5 bg-zinc-700/80 rounded w-5/6" />
+            <div className="h-2 bg-zinc-800 rounded w-4/6 mt-3" />
+            <div className="h-2 bg-zinc-800 rounded w-full" />
+            <div className="h-2 bg-zinc-800 rounded w-3/4" />
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-function OfflineCard() {
+function OfflineCard({ kpi }: { kpi?: KpiContext }) {
   return (
     <div className="rounded-xl border border-zinc-800/60 bg-[#0f1117] overflow-hidden border-l-[3px] border-l-zinc-700">
       <div className="px-5 py-3 border-b border-zinc-800/40 flex items-center gap-2">
@@ -87,8 +201,9 @@ function OfflineCard() {
           Executive Insight
         </span>
       </div>
-      <div className="px-5 py-5 flex items-center gap-3 text-zinc-600">
-        <WifiOff size={14} className="shrink-0" />
+      {kpi && <KpiLayer kpi={kpi} />}
+      <div className="mx-5 my-3 rounded-lg border border-zinc-700/40 bg-zinc-900 px-4 py-3 flex items-center gap-3 text-zinc-600">
+        <WifiOff size={13} className="shrink-0" />
         <span className="text-xs">Inteligência temporariamente offline.</span>
       </div>
     </div>
@@ -100,13 +215,13 @@ function BudgetPacingBadge({ pacing }: { pacing: BudgetPacingData }) {
   const isUnder = pacing.pacing_status === "under";
 
   const colors = isOver
-    ? { wrap: "bg-red-500/10 border-red-500/20",   text: "text-red-300",    sub: "text-red-500/70"   }
+    ? { wrap: "bg-red-500/10 border-red-500/20",       text: "text-red-300",    sub: "text-red-500/70"     }
     : isUnder
-      ? { wrap: "bg-indigo-500/10 border-indigo-500/20", text: "text-indigo-300", sub: "text-indigo-500/70" }
-      : { wrap: "bg-emerald-500/10 border-emerald-500/20", text: "text-emerald-300", sub: "text-emerald-600" };
+    ? { wrap: "bg-indigo-500/10 border-indigo-500/20", text: "text-indigo-300", sub: "text-indigo-500/70"  }
+    : { wrap: "bg-emerald-500/10 border-emerald-500/20", text: "text-emerald-300", sub: "text-emerald-600" };
 
-  const Icon   = isOver ? TrendingUp : isUnder ? TrendingDown : Minus;
-  const label  = isOver ? "PACING: ESTOURO" : isUnder ? "PACING: SUB-UTILIZAÇÃO" : "PACING: NO RITMO";
+  const Icon  = isOver ? TrendingUp : isUnder ? TrendingDown : Minus;
+  const label = isOver ? "PACING: ESTOURO" : isUnder ? "PACING: SUB-UTILIZAÇÃO" : "PACING: NO RITMO";
 
   return (
     <div className={`mx-5 mb-3 flex items-start gap-2.5 rounded-lg border px-3 py-2 ${colors.wrap}`}>
@@ -141,9 +256,7 @@ function PlaybookChecklist({ playbooks }: { playbooks: SuggestedPlaybook[] }) {
     medium: "bg-amber-500/15 text-amber-400 border-amber-500/20",
     high:   "bg-red-500/15 text-red-400 border-red-500/20",
   };
-  const effortLabel: Record<string, string> = {
-    low: "BAIXO", medium: "MÉDIO", high: "ALTO",
-  };
+  const effortLabel: Record<string, string> = { low: "BAIXO", medium: "MÉDIO", high: "ALTO" };
 
   return (
     <div className="mx-5 mb-3 rounded-lg border border-zinc-800/60 bg-zinc-900/30 px-3 py-2.5">
@@ -176,11 +289,18 @@ function PlaybookChecklist({ playbooks }: { playbooks: SuggestedPlaybook[] }) {
 
 const PREVIEW_PREFIX = "[PREVIEW DE TESTE] ";
 
-export function AINarrativeCard() {
+export function AINarrativeCard({
+  kpi,
+  workspaceId,
+}: {
+  kpi?:         KpiContext;
+  workspaceId?: string;
+}) {
   const [state, setState] = useState<FetchState>({ status: "loading" });
 
   useEffect(() => {
     let cancelled = false;
+    setState({ status: "loading" });
 
     fetch("/api/ai/narrative")
       .then((res) => res.json())
@@ -197,10 +317,10 @@ export function AINarrativeCard() {
       });
 
     return () => { cancelled = true; };
-  }, []);
+  }, [workspaceId]);
 
-  if (state.status === "loading") return <LoadingSkeleton />;
-  if (state.status === "offline")  return <OfflineCard />;
+  if (state.status === "loading") return <LoadingSkeleton kpi={kpi} />;
+  if (state.status === "offline")  return <OfflineCard kpi={kpi} />;
 
   const { narrative } = state;
   const isAlert = narrative.priority_score >= 4;
@@ -214,7 +334,7 @@ export function AINarrativeCard() {
       className={`rounded-xl border border-zinc-800/60 bg-[#0f1117] overflow-hidden
         border-l-[3px] ${isAlert ? "border-l-red-500" : "border-l-indigo-600/60"}`}
     >
-      {/* Header */}
+      {/* Header bar */}
       <div className="px-5 py-3 border-b border-zinc-800/40 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 min-w-0">
           <Sparkles size={13} className={isAlert ? "text-red-400 shrink-0" : "text-indigo-400 shrink-0"} />
@@ -234,15 +354,15 @@ export function AINarrativeCard() {
         </div>
       </div>
 
-      {/* Insight summary + technical diagnosis */}
-      <div className="px-5 py-4">
-        <p className={`text-sm font-semibold leading-snug ${isAlert ? "text-red-100/90" : "text-zinc-100"}`}>
-          {summaryText}
-        </p>
-        <p className="text-[11px] text-zinc-500 leading-relaxed mt-2.5">
-          {narrative.technical_diagnosis}
-        </p>
-      </div>
+      {/* Layers 1 + 2: KPI metrics (always shown, from parent state) */}
+      {kpi && <KpiLayer kpi={kpi} />}
+
+      {/* Layer 3: AI Narrative conseil box */}
+      <NarrativeBox
+        summary={summaryText}
+        diagnosis={narrative.technical_diagnosis}
+        isAlert={isAlert}
+      />
 
       {/* Budget pacing */}
       {narrative.budget_pacing && (
@@ -263,19 +383,17 @@ export function AINarrativeCard() {
           <div className="space-y-1.5">
             {narrative.probable_causes.map((c, i) => (
               <div key={i} className="flex items-start gap-2">
-                {/* Layer badge */}
                 <span className={`shrink-0 text-[8px] font-bold px-1.5 py-0.5 rounded border tracking-wide ${
-                  c.layer === "tracking"  ? "bg-red-500/15 text-red-400 border-red-500/20" :
-                  c.layer === "creative"  ? "bg-amber-500/15 text-amber-400 border-amber-500/20" :
+                  c.layer === "tracking"  ? "bg-red-500/15 text-red-400 border-red-500/20"       :
+                  c.layer === "creative"  ? "bg-amber-500/15 text-amber-400 border-amber-500/20"   :
                   c.layer === "audience"  ? "bg-violet-500/15 text-violet-400 border-violet-500/20" :
                   c.layer === "landing"   ? "bg-orange-500/15 text-orange-400 border-orange-500/20" :
                                            "bg-emerald-500/15 text-emerald-400 border-emerald-500/20"
                 }`}>
                   {c.layer.toUpperCase()}
                 </span>
-                {/* Confidence dot */}
                 <span className={`shrink-0 mt-[3px] w-1.5 h-1.5 rounded-full ${
-                  c.confidence === "high"   ? "bg-red-400" :
+                  c.confidence === "high"   ? "bg-red-400"   :
                   c.confidence === "medium" ? "bg-amber-400" :
                                              "bg-zinc-600"
                 }`} title={c.confidence} />
@@ -291,7 +409,7 @@ export function AINarrativeCard() {
 
       {/* Recommended action */}
       <div
-        className={`px-5 py-3 border-t flex items-start gap-2.5
+        className={`px-5 py-3.5 border-t flex items-start gap-2.5
           ${isAlert ? "border-red-900/30 bg-red-950/[0.07]" : "border-zinc-800/40"}`}
       >
         <ArrowRight

@@ -7,8 +7,7 @@ import {
   Loader2, CheckCircle2, ShieldCheck, Activity, Database,
 } from "lucide-react";
 import { createClient } from "@/utils/supabase/client";
-import { DEFAULT_WORKSPACE } from "@/lib/workspace";
-import { AINarrativeCard } from "@/components/AINarrativeCard";
+import { AINarrativeCard, type KpiContext } from "@/components/AINarrativeCard";
 import { computeDecisionBrief, type Ga4DecisionInput } from "@/lib/decision";
 import {
   computeHealth, latestPerExpectedSource, timeAgo, EXPECTED_SOURCES,
@@ -36,6 +35,13 @@ interface DQCheck {
 
 interface KpiRow     { date: string; metric_name: string; metric_value: number; }
 interface ChartPoint { date: string; roas: number; spend: number; }
+
+interface CampSummaryRow {
+  campaign_id: string;
+  cost:        number;
+  clicks:      number;
+  ctr:         number; // decimal
+}
 
 type MarkerType = "sync" | "governance" | "insight" | "anomaly";
 interface ChartMarker { date: string; type: MarkerType; }
@@ -349,6 +355,7 @@ export function ExecutiveBoardView({ workspaceId }: { workspaceId: string }) {
   const [syncRuns, setSyncRuns] = useState<SyncRun[]>([]);
   const [kpiRows,        setKpiRows]        = useState<KpiRow[]>([]);
   const [anomalyEvents,  setAnomalyEvents]  = useState<AnomalyEvent[]>([]);
+  const [campSummaryRows, setCampSummaryRows] = useState<CampSummaryRow[]>([]);
   const [loading,        setLoading]        = useState(true);
   const [selectedPeriod, setSelectedPeriod] = useState<7 | 15 | 30>(30);
 
@@ -356,7 +363,7 @@ export function ExecutiveBoardView({ workspaceId }: { workspaceId: string }) {
     let cancelled = false;
     async function loadAll() {
       setLoading(true);
-      const [insightRes, ga4Res, dqRes, syncRes, kpiRes, anomalyRes] = await Promise.all([
+      const [insightRes, ga4Res, dqRes, syncRes, kpiRes, anomalyRes, campSummaryRes] = await Promise.all([
         supabase
           .from("insight_feed")
           .select("insight_type, status, evidence, dedupe_key, date_range_start")
@@ -385,7 +392,7 @@ export function ExecutiveBoardView({ workspaceId }: { workspaceId: string }) {
           .from("kpi_cache_daily")
           .select("date, metric_name, metric_value")
           .eq("workspace_id", workspaceId)
-          .in("metric_name", ["roas", "total_cost"])
+          .in("metric_name", ["roas", "total_cost", "conversions"])
           .gte("date", sinceDate(30))
           .order("date", { ascending: true }),
         supabase
@@ -395,6 +402,14 @@ export function ExecutiveBoardView({ workspaceId }: { workspaceId: string }) {
           .eq("category", "kpi_anomaly")
           .order("occurred_at", { ascending: false })
           .limit(30),
+        supabase
+          .from("campaign_summary")
+          .select("campaign_id, cost, clicks, ctr")
+          .eq("workspace_id", workspaceId)
+          .eq("is_mock", false)
+          .order("date_range_end", { ascending: false })
+          .order("cost",           { ascending: false })
+          .limit(100),
       ]);
 
       setInsights(dedupeInsights((insightRes.data as MinInsight[]) ?? []));
@@ -413,6 +428,17 @@ export function ExecutiveBoardView({ workspaceId }: { workspaceId: string }) {
       setSyncRuns((syncRes.data as SyncRun[])  ?? []);
       setKpiRows(     (kpiRes.data     as KpiRow[])      ?? []);
       setAnomalyEvents((anomalyRes.data as AnomalyEvent[]) ?? []);
+
+      const seenCamp = new Set<string>();
+      const campDeduped: CampSummaryRow[] = [];
+      for (const row of (campSummaryRes.data ?? []) as CampSummaryRow[]) {
+        if (!seenCamp.has(row.campaign_id)) {
+          seenCamp.add(row.campaign_id);
+          campDeduped.push(row);
+        }
+      }
+      setCampSummaryRows(campDeduped);
+
       setLoading(false);
     }
     void loadAll();
@@ -503,6 +529,42 @@ export function ExecutiveBoardView({ workspaceId }: { workspaceId: string }) {
     };
   }, [ga4]);
 
+  // ── Campaign-level KPI aggregates (for AINarrativeCard) ──────────────────
+
+  const totalConversions = useMemo(() => {
+    const dates = new Set(periodData.map(d => d.date));
+    const total = kpiRows
+      .filter(r => r.metric_name === "conversions" && dates.has(r.date))
+      .reduce((s, r) => s + r.metric_value, 0);
+    return total > 0 ? Math.round(total) : null;
+  }, [kpiRows, periodData]);
+
+  const totalClicks = useMemo(() => {
+    const total = campSummaryRows.reduce((s, r) => s + (r.clicks ?? 0), 0);
+    return total > 0 ? total : null;
+  }, [campSummaryRows]);
+
+  const cpc = useMemo(() => {
+    if (totalSpend === null || totalClicks === null || totalClicks === 0) return null;
+    return totalSpend / totalClicks;
+  }, [totalSpend, totalClicks]);
+
+  const avgCtr = useMemo(() => {
+    const totalCost = campSummaryRows.reduce((s, r) => s + (r.cost ?? 0), 0);
+    if (totalCost === 0) return null;
+    const weighted = campSummaryRows.reduce((s, r) => s + (r.ctr ?? 0) * (r.cost ?? 0), 0);
+    return weighted / totalCost;
+  }, [campSummaryRows]);
+
+  const narrativeKpi: KpiContext = {
+    roas:             avgRoas,
+    trendDelta,
+    totalSpend,
+    totalConversions,
+    cpc,
+    ctr:              avgCtr,
+  };
+
   const sourcesOk   = EXPECTED_SOURCES.filter(s => latestSyncMap[s]?.status === "success").length;
   const latestSyncRun = syncRuns[0] ?? null;
   const syncTimeAgo = latestSyncRun ? timeAgo(latestSyncRun.finished_at ?? latestSyncRun.started_at) : "—";
@@ -543,8 +605,8 @@ export function ExecutiveBoardView({ workspaceId }: { workspaceId: string }) {
   return (
     <div className="space-y-3">
 
-      {/* 0 ── Executive Insight — AI diagnostic (mock; live: fn_campaign_snapshot_delta) */}
-      <AINarrativeCard />
+      {/* 0 ── Executive Insight — AI diagnostic */}
+      <AINarrativeCard kpi={narrativeKpi} workspaceId={workspaceId} />
 
       {/* 1 ── Saúde Operacional — compact status strip ───────────────────── */}
       <div className="bg-[#0f1117] border border-zinc-800/60 rounded-xl px-4 py-2.5 flex items-center gap-4 flex-wrap">
