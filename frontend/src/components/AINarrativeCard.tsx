@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   Sparkles, ArrowRight, AlertTriangle, Loader2, WifiOff, ExternalLink,
-  TrendingUp, TrendingDown, Minus, Lightbulb,
+  TrendingUp, TrendingDown, Minus, Lightbulb, Zap,
 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -52,6 +52,87 @@ type FetchState =
   | { status: "loading" }
   | { status: "success"; narrative: NarrativeData }
   | { status: "offline" };
+
+// ─── Diagnostic parser ────────────────────────────────────────────────────────
+
+interface DiagnosticEntry {
+  kind:     "waste" | "fault" | "anomaly" | "tracking";
+  severity: "fatal" | "performance";
+  label:    string;
+  value:    string;
+  url?:     string;
+}
+
+function parseDiagnostics(causes: ProbableCause[], diagnosis: string): DiagnosticEntry[] {
+  const entries: DiagnosticEntry[] = [];
+
+  // Primary: structured probable_causes (most reliable, already categorised by AI)
+  for (const c of causes) {
+    if (c.layer === "tracking") {
+      entries.push({ kind: "tracking", severity: "fatal", label: c.cause, value: c.evidence });
+    } else if (c.layer === "landing") {
+      const url = diagnosis.match(/https?:\/\/[^\s'")\]]+/)?.[0];
+      entries.push({ kind: "fault", severity: "fatal", label: c.cause, value: c.evidence, url });
+    } else if (c.layer === "budget") {
+      const sev = c.confidence === "high" ? "fatal" : "performance";
+      entries.push({ kind: "waste", severity: sev, label: c.cause, value: c.evidence });
+    } else if (c.layer === "creative" || c.layer === "audience") {
+      entries.push({ kind: "anomaly", severity: "performance", label: c.cause, value: c.evidence });
+    }
+  }
+
+  // Fallback: text parsing for items not already covered
+
+  // Waste: R$ amount near "zero conversions"
+  if (!entries.some(e => e.kind === "waste")) {
+    const wm = diagnosis.match(/(R\$\s*[\d.,]+(?:k|K)?)\b[^.]*?(?:zero|ZERO|0)\s+conversions?/i);
+    if (wm) entries.push({ kind: "waste", severity: "fatal", label: "Verba sem retorno", value: wm[1] });
+  }
+
+  // 404: URL 'X' returns 404
+  if (!entries.some(e => e.kind === "fault")) {
+    const fm = diagnosis.match(/URL\s+'([^']+)'\s+(?:returns?|retorna)\s+404/i);
+    if (fm) {
+      const raw = fm[1];
+      entries.push({
+        kind: "fault", severity: "fatal",
+        label: "Página inacessível (404)",
+        value: raw.length > 45 ? raw.slice(0, 42) + "…" : raw,
+        url: raw,
+      });
+    }
+  }
+
+  // Tracking keywords
+  if (!entries.some(e => e.kind === "tracking")) {
+    if (/utm[^.]{0,40}(?:broken|compromised|missing|empty)|attribution\s+(?:broken|compromised)/i.test(diagnosis)) {
+      entries.push({ kind: "tracking", severity: "fatal", label: "Tracking comprometido", value: "UTM attribution" });
+    }
+  }
+
+  // Load time ≥ 3 s
+  const lm = diagnosis.match(/(\d{4,})\s*ms/);
+  if (lm) {
+    entries.push({
+      kind: "anomaly", severity: "performance",
+      label: "Tempo de carregamento",
+      value: `${parseInt(lm[1]).toLocaleString("pt-BR")} ms`,
+    });
+  }
+
+  // Large-percentage anomaly (≥ 100 %)
+  if (!entries.some(e => e.kind === "anomaly")) {
+    const pm = [...diagnosis.matchAll(/([+-]?\d{3,}(?:[,.]\d+)?%)/g)];
+    if (pm.length > 0) entries.push({ kind: "anomaly", severity: "performance", label: "Anomalia de ROAS", value: pm[0][1] });
+  }
+
+  // Sort fatal first, then performance
+  return entries.sort((a, b) => {
+    if (a.severity === "fatal" && b.severity !== "fatal") return -1;
+    if (b.severity === "fatal" && a.severity !== "fatal") return 1;
+    return 0;
+  });
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -108,48 +189,92 @@ function KpiLayer({ kpi }: { kpi: KpiContext }) {
 
       {/* Layer 2 — secondary metrics */}
       <div className="grid grid-cols-3 gap-3">
-        <MetricCell
-          label="Investimento"
-          value={kpi.totalSpend !== null ? fmtBRLCompact(kpi.totalSpend) : "—"}
-        />
-        <MetricCell
-          label="CPC médio"
-          value={kpi.cpc !== null ? `R$ ${kpi.cpc.toFixed(2).replace(".", ",")}` : "—"}
-        />
-        <MetricCell
-          label="CTR médio"
-          value={kpi.ctr !== null ? fmtPctDecimal(kpi.ctr) : "—"}
-        />
+        <MetricCell label="Investimento" value={kpi.totalSpend !== null ? fmtBRLCompact(kpi.totalSpend) : "—"} />
+        <MetricCell label="CPC médio"    value={kpi.cpc !== null ? `R$ ${kpi.cpc.toFixed(2).replace(".", ",")}` : "—"} />
+        <MetricCell label="CTR médio"    value={kpi.ctr !== null ? fmtPctDecimal(kpi.ctr) : "—"} />
       </div>
     </div>
   );
 }
 
-function NarrativeBox({
+// ─── DiagnosticItem ───────────────────────────────────────────────────────────
+
+function DiagnosticItem({ entry }: { entry: DiagnosticEntry }) {
+  const isFatal = entry.severity === "fatal";
+
+  const Icon =
+    entry.kind === "waste"    ? TrendingDown  :
+    entry.kind === "tracking" ? WifiOff       :
+    entry.kind === "fault"    ? AlertTriangle :
+                                Zap;
+
+  const s = isFatal
+    ? { wrap: "bg-red-500/10 border-red-500/20",     icon: "text-red-400",   label: "text-red-300",   value: "text-red-200/70"   }
+    : { wrap: "bg-amber-500/10 border-amber-500/20", icon: "text-amber-400", label: "text-amber-300", value: "text-amber-200/70" };
+
+  return (
+    <div className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border ${s.wrap}`}>
+      <Icon size={11} className={`shrink-0 ${s.icon}`} />
+      <div className="min-w-0 flex-1">
+        <p className={`text-[9px] font-bold uppercase tracking-wider leading-none mb-0.5 ${s.label}`}>
+          {entry.label}
+        </p>
+        <p className={`text-[11px] font-mono leading-tight truncate ${s.value}`}>
+          {entry.value}
+        </p>
+      </div>
+      {entry.url && (
+        <a
+          href={entry.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="shrink-0 flex items-center gap-1 text-[9px] font-semibold text-red-400/80 hover:text-red-300 border border-red-500/20 rounded px-1.5 py-0.5 whitespace-nowrap transition-colors"
+        >
+          Ver URL <ExternalLink size={8} />
+        </a>
+      )}
+    </div>
+  );
+}
+
+// ─── DiagnosticPanel (Layer 3) ────────────────────────────────────────────────
+
+function DiagnosticPanel({
   summary,
   diagnosis,
   isAlert,
+  causes,
 }: {
   summary:   string;
   diagnosis: string;
   isAlert:   boolean;
+  causes:    ProbableCause[];
 }) {
+  const diagnostics = parseDiagnostics(causes, diagnosis);
+
   return (
     <div className="mx-5 my-3 rounded-lg border border-zinc-700/40 bg-zinc-900 px-4 py-3">
-      <div className="flex items-start gap-2.5">
-        <Lightbulb
-          size={13}
-          className={`mt-0.5 shrink-0 ${isAlert ? "text-amber-400" : "text-indigo-400/80"}`}
-        />
-        <div className="min-w-0">
-          <p className={`text-sm font-semibold leading-snug ${isAlert ? "text-red-100/90" : "text-zinc-100"}`}>
-            {summary}
-          </p>
-          <p className="text-[11px] text-zinc-500 leading-relaxed mt-2">
-            {diagnosis}
-          </p>
-        </div>
+      {/* Summary — conseil header, max 2 lines */}
+      <div className="flex items-start gap-2.5 mb-3">
+        <Lightbulb size={13} className={`mt-0.5 shrink-0 ${isAlert ? "text-amber-400" : "text-indigo-400/80"}`} />
+        <p className={`text-sm font-semibold leading-snug line-clamp-2 ${isAlert ? "text-red-100/90" : "text-zinc-100"}`}>
+          {summary}
+        </p>
       </div>
+
+      {/* Diagnostic items — fatal first, then performance */}
+      {diagnostics.length > 0 && (
+        <div className="space-y-1.5 mb-3">
+          {diagnostics.map((e, i) => (
+            <DiagnosticItem key={i} entry={e} />
+          ))}
+        </div>
+      )}
+
+      {/* Supporting technical detail — max 3 lines */}
+      <p className="text-[10px] text-zinc-600 leading-relaxed line-clamp-3">
+        {diagnosis}
+      </p>
     </div>
   );
 }
@@ -175,17 +300,23 @@ function LoadingSkeleton({ kpi }: { kpi?: KpiContext }) {
         </span>
       </div>
       {kpi && <KpiLayer kpi={kpi} />}
-      {/* Narrative skeleton */}
+      {/* Diagnostic panel skeleton */}
       <div className="mx-5 my-3 rounded-lg border border-zinc-700/40 bg-zinc-900 px-4 py-3">
-        <div className="flex items-start gap-2.5">
-          <Loader2 size={13} className="text-indigo-400/60 shrink-0 animate-spin mt-0.5" />
-          <div className="flex-1 space-y-2 animate-pulse">
+        <div className="flex items-start gap-2.5 mb-3 animate-pulse">
+          <div className="mt-0.5 w-3 h-3 rounded-full bg-zinc-700 shrink-0" />
+          <div className="flex-1 space-y-1.5">
             <div className="h-2.5 bg-zinc-700/80 rounded w-full" />
-            <div className="h-2.5 bg-zinc-700/80 rounded w-5/6" />
-            <div className="h-2 bg-zinc-800 rounded w-4/6 mt-3" />
-            <div className="h-2 bg-zinc-800 rounded w-full" />
-            <div className="h-2 bg-zinc-800 rounded w-3/4" />
+            <div className="h-2.5 bg-zinc-700/80 rounded w-4/5" />
           </div>
+        </div>
+        <div className="space-y-1.5 mb-3 animate-pulse">
+          <div className="h-9 bg-red-500/8 border border-red-500/10 rounded-lg" />
+          <div className="h-9 bg-amber-500/8 border border-amber-500/10 rounded-lg" />
+        </div>
+        <div className="space-y-1 animate-pulse">
+          <div className="h-2 bg-zinc-800 rounded w-full" />
+          <div className="h-2 bg-zinc-800 rounded w-5/6" />
+          <div className="h-2 bg-zinc-800 rounded w-3/4" />
         </div>
       </div>
     </div>
@@ -215,10 +346,10 @@ function BudgetPacingBadge({ pacing }: { pacing: BudgetPacingData }) {
   const isUnder = pacing.pacing_status === "under";
 
   const colors = isOver
-    ? { wrap: "bg-red-500/10 border-red-500/20",       text: "text-red-300",    sub: "text-red-500/70"     }
+    ? { wrap: "bg-red-500/10 border-red-500/20",         text: "text-red-300",    sub: "text-red-500/70"    }
     : isUnder
-    ? { wrap: "bg-indigo-500/10 border-indigo-500/20", text: "text-indigo-300", sub: "text-indigo-500/70"  }
-    : { wrap: "bg-emerald-500/10 border-emerald-500/20", text: "text-emerald-300", sub: "text-emerald-600" };
+    ? { wrap: "bg-indigo-500/10 border-indigo-500/20",   text: "text-indigo-300", sub: "text-indigo-500/70" }
+    : { wrap: "bg-emerald-500/10 border-emerald-500/20", text: "text-emerald-300", sub: "text-emerald-600"  };
 
   const Icon  = isOver ? TrendingUp : isUnder ? TrendingDown : Minus;
   const label = isOver ? "PACING: ESTOURO" : isUnder ? "PACING: SUB-UTILIZAÇÃO" : "PACING: NO RITMO";
@@ -233,15 +364,11 @@ function BudgetPacingBadge({ pacing }: { pacing: BudgetPacingData }) {
             R${pacing.estimated_total_spend.toFixed(2)} projetado
           </span>
           {pacing.days_until_exhaustion != null && (
-            <span className={`text-[10px] ${colors.sub}`}>
-              · {pacing.days_until_exhaustion}d até esgotar
-            </span>
+            <span className={`text-[10px] ${colors.sub}`}>· {pacing.days_until_exhaustion}d até esgotar</span>
           )}
         </div>
         {pacing.recommendation && (
-          <p className={`text-[10px] mt-0.5 leading-relaxed ${colors.sub}`}>
-            {pacing.recommendation}
-          </p>
+          <p className={`text-[10px] mt-0.5 leading-relaxed ${colors.sub}`}>{pacing.recommendation}</p>
         )}
       </div>
     </div>
@@ -354,14 +481,15 @@ export function AINarrativeCard({
         </div>
       </div>
 
-      {/* Layers 1 + 2: KPI metrics (always shown, from parent state) */}
+      {/* Layers 1 + 2: KPI metrics */}
       {kpi && <KpiLayer kpi={kpi} />}
 
-      {/* Layer 3: AI Narrative conseil box */}
-      <NarrativeBox
+      {/* Layer 3: Structured diagnostic panel */}
+      <DiagnosticPanel
         summary={summaryText}
         diagnosis={narrative.technical_diagnosis}
         isAlert={isAlert}
+        causes={narrative.probable_causes ?? []}
       />
 
       {/* Budget pacing */}
@@ -374,48 +502,12 @@ export function AINarrativeCard({
         <PlaybookChecklist playbooks={narrative.suggested_playbooks} />
       )}
 
-      {/* Probable causes */}
-      {narrative.probable_causes && narrative.probable_causes.length > 0 && (
-        <div className="px-5 pb-4">
-          <p className="text-[9px] font-semibold text-zinc-600 uppercase tracking-widest mb-2">
-            Causas Prováveis
-          </p>
-          <div className="space-y-1.5">
-            {narrative.probable_causes.map((c, i) => (
-              <div key={i} className="flex items-start gap-2">
-                <span className={`shrink-0 text-[8px] font-bold px-1.5 py-0.5 rounded border tracking-wide ${
-                  c.layer === "tracking"  ? "bg-red-500/15 text-red-400 border-red-500/20"       :
-                  c.layer === "creative"  ? "bg-amber-500/15 text-amber-400 border-amber-500/20"   :
-                  c.layer === "audience"  ? "bg-violet-500/15 text-violet-400 border-violet-500/20" :
-                  c.layer === "landing"   ? "bg-orange-500/15 text-orange-400 border-orange-500/20" :
-                                           "bg-emerald-500/15 text-emerald-400 border-emerald-500/20"
-                }`}>
-                  {c.layer.toUpperCase()}
-                </span>
-                <span className={`shrink-0 mt-[3px] w-1.5 h-1.5 rounded-full ${
-                  c.confidence === "high"   ? "bg-red-400"   :
-                  c.confidence === "medium" ? "bg-amber-400" :
-                                             "bg-zinc-600"
-                }`} title={c.confidence} />
-                <div className="min-w-0">
-                  <p className="text-[10px] text-slate-300 font-medium leading-tight">{c.cause}</p>
-                  <p className="text-[9px] text-zinc-600 leading-relaxed">{c.evidence}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
       {/* Recommended action */}
       <div
         className={`px-5 py-3.5 border-t flex items-start gap-2.5
           ${isAlert ? "border-red-900/30 bg-red-950/[0.07]" : "border-zinc-800/40"}`}
       >
-        <ArrowRight
-          size={13}
-          className={`mt-0.5 shrink-0 ${isAlert ? "text-red-400" : "text-indigo-400"}`}
-        />
+        <ArrowRight size={13} className={`mt-0.5 shrink-0 ${isAlert ? "text-red-400" : "text-indigo-400"}`} />
         <div className="min-w-0 flex-1">
           <p className="text-[9px] font-semibold text-zinc-600 uppercase tracking-wider mb-1">
             Ação Recomendada
