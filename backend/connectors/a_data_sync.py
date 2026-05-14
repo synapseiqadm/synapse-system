@@ -3,9 +3,10 @@
 A-Data Sync - entry point for the SynapseIQ data pipeline.
 
 Usage (from backend/):
-    python -m connectors.a_data_sync
+    python -m connectors.a_data_sync                   # default tenant: Woke People
     python -m connectors.a_data_sync --dry-run
-    python connectors/a_data_sync.py --dry-run
+    python -m connectors.a_data_sync --tenant cacau
+    python -m connectors.a_data_sync --tenant pigz --dry-run
 """
 import os
 import sys
@@ -13,9 +14,64 @@ import argparse
 
 sys.stdout.reconfigure(encoding="utf-8")
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
+_HERE        = os.path.dirname(os.path.abspath(__file__))
+_BACKEND_DIR = os.path.dirname(_HERE)
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
+
+# ─── Tenant registry ──────────────────────────────────────────────────────────
+# Single source of truth for all tenant configuration.
+# CI workflows still inject env vars directly (no --tenant needed there).
+# Local CLI: --tenant <slug> overrides env vars before config.py is imported.
+TENANT_REGISTRY: dict[str, dict] = {
+    "woke": {
+        "name":         "Woke People",
+        "workspace_id": "a082fe86-a65f-4c9b-9442-fe775f47e3fc",
+        "customer_id":  "6627867790",
+        "dataset":      "raw_google_ads_woke",
+        "ga4_dataset":  "analytics_289891960",
+        "config_path":  os.path.join(_BACKEND_DIR, "governance", "tenants", "woke_measurement_config.yml"),
+    },
+    "pigz": {
+        "name":         "Pigz",
+        "workspace_id": "63fd5033-2705-41a5-a3a3-95de623d9da7",
+        "customer_id":  "8378967509",
+        "dataset":      "raw_google_ads_pigz",
+        "ga4_dataset":  "",
+        "config_path":  os.path.join(_BACKEND_DIR, "governance", "tenants", "pigz_measurement_config.yml"),
+    },
+    "cacau": {
+        "name":         "Cacau Turismo",
+        "workspace_id": "b7126974-4b12-468a-bea6-7852fae62a00",
+        "customer_id":  "7184417498",
+        "dataset":      "raw_google_ads_cacau",
+        "ga4_dataset":  "",
+        "config_path":  os.path.join(_BACKEND_DIR, "governance", "tenants", "cacau_measurement_config.yml"),
+    },
+}
+
+# ─── Pre-parse --tenant BEFORE config.py is imported ─────────────────────────
+# config.py snapshots os.environ into _PROCESS_ENV at module load time.
+# Env var overrides must be in place before that snapshot is taken.
+_pre = argparse.ArgumentParser(add_help=False)
+_pre.add_argument("--tenant", default=None)
+_pre_args, _ = _pre.parse_known_args()
+
+if _pre_args.tenant is not None:
+    _slug = _pre_args.tenant.lower()
+    if _slug not in TENANT_REGISTRY:
+        print(
+            f"ERROR: unknown tenant '{_slug}'. "
+            f"Available: {', '.join(TENANT_REGISTRY)}",
+            flush=True,
+        )
+        sys.exit(1)
+    _t = TENANT_REGISTRY[_slug]
+    os.environ["WORKSPACE_ID"]            = _t["workspace_id"]
+    os.environ["GOOGLE_ADS_CUSTOMER_ID"]  = _t["customer_id"]
+    os.environ["GOOGLE_ADS_DATASET"]      = _t["dataset"]
+    os.environ["GA4_DATASET"]             = _t["ga4_dataset"]
+    os.environ["MEASUREMENT_CONFIG_PATH"] = _t["config_path"]
 
 from config import (
     APP_ENV, WORKSPACE_ID,
@@ -39,8 +95,14 @@ from agent_decisions import generate_agent_decisions
 
 
 def main(dry_run: bool = False) -> None:
+    _slug          = (_pre_args.tenant or "").lower()
+    _active_tenant = TENANT_REGISTRY.get(_slug, {}).get("name") or next(
+        (v["name"] for v in TENANT_REGISTRY.values() if v["workspace_id"] == WORKSPACE_ID),
+        WORKSPACE_ID,
+    )
     print(
         f"[a_data_sync] env={APP_ENV} dry_run={dry_run} "
+        f"targeted_tenant='{_active_tenant}' "
         f"period={DATE_RANGE_START}..{DATE_RANGE_END}",
         flush=True,
     )
@@ -377,5 +439,11 @@ def main(dry_run: bool = False) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="SynapseIQ A-Data Sync")
     parser.add_argument("--dry-run", action="store_true", help="Validate without writing to Supabase")
+    parser.add_argument(
+        "--tenant",
+        default=None,
+        metavar="SLUG",
+        help=f"Tenant to sync: {', '.join(TENANT_REGISTRY)} (default: woke)",
+    )
     args = parser.parse_args()
     main(dry_run=args.dry_run)
