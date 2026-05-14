@@ -57,7 +57,7 @@ def sync_campaigns(
             SUM(s.metrics_conversions_value)             AS conv_value,
             SUM(s.metrics_clicks)                        AS clicks,
             SUM(s.metrics_impressions)                   AS impressions,
-            c.daily_budget
+            ANY_VALUE(c.daily_budget)                    AS daily_budget
         FROM `{GCP_PROJECT_ID}.{GOOGLE_ADS_DATASET}.{STATS_TABLE}` s
         JOIN (
             SELECT campaign_id,
