@@ -374,7 +374,7 @@ function CampanhasView({ campaigns, loading }: { campaigns: CampaignRow[]; loadi
 
         {!loading && campaigns.length === 0 ? (
           <div className="flex items-center justify-center h-24 text-zinc-700 text-sm">
-            Sem campanhas. Execute <span className="font-mono mx-1">sync_woke.py</span> primeiro.
+            Sem campanhas para este workspace. Execute o sync primeiro.
           </div>
         ) : (
           <div className="grid grid-cols-2 xl:grid-cols-3 gap-3">
@@ -480,7 +480,7 @@ function KeywordsView({ keywords, loading }: { keywords: KeywordRow[]; loading: 
           <div className="flex items-center justify-center h-28 text-zinc-700 text-sm">
             {search || matchFilter !== "all"
               ? "Nenhuma keyword encontrada para esses filtros."
-              : "Sem dados. Execute sync_woke.py primeiro."}
+              : "Sem dados para este workspace. Execute o sync primeiro."}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -545,7 +545,7 @@ function KeywordsView({ keywords, loading }: { keywords: KeywordRow[]; loading: 
 
 const NAV_META: Record<NavItem, { title: string; subtitle: string }> = {
   geral:         { title: "Painel Executivo",    subtitle: "síntese operacional · determinístico"             },
-  growth:        { title: "Growth Intelligence", subtitle: "GA4 · Funil · Governança · Woke People"          },
+  growth:        { title: "Growth Intelligence", subtitle: "GA4 · Funil · Governança"                        },
   campanhas:     { title: "Campanhas",           subtitle: "campaign_summary · últimos 30 dias"               },
   keywords:      { title: "Palavras-chave",      subtitle: "keyword_analysis · últimos 30 dias"               },
   qualidade:     { title: "Qualidade dos Dados", subtitle: "data_quality_report · A-Data checks"              },
@@ -643,7 +643,12 @@ export default function DashboardPage() {
     window.location.reload();
   };
 
-  const meta = NAV_META[nav];
+  const meta = {
+    ...NAV_META[nav],
+    subtitle: nav === "growth"
+      ? `GA4 · Funil · Governança · ${activeWorkspaceName}`
+      : NAV_META[nav].subtitle,
+  };
 
   return (
     <div className="flex h-screen bg-[#09090b] text-slate-200 overflow-hidden font-sans">
